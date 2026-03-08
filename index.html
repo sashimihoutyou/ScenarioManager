@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Scenario Architect v5</title>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        :root { --txt-color: #2980b9; --chc-color: #d35400; --opt-color: #f1c40f; }
+        body { margin: 0; padding: 0; font-family: -apple-system, sans-serif; overflow: hidden; background: #eceff1; }
+        #network { width: 100vw; height: 100vh; }
+        .ui-top { position: absolute; top: 12px; left: 12px; z-index: 100; display: flex; gap: 8px; flex-wrap: wrap; }
+        button { padding: 12px 14px; border-radius: 8px; border: none; background: #34495e; color: white; font-weight: bold; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .edit-panel { 
+            position: absolute; bottom: 0; width: 100%; background: white; 
+            padding: 20px; box-sizing: border-box; transform: translateY(105%);
+            transition: transform 0.3s cubic-bezier(0.1, 0.8, 0.3, 1); z-index: 1000; 
+            border-top: 4px solid #34495e; border-radius: 20px 20px 0 0; box-shadow: 0 -10px 20px rgba(0,0,0,0.1);
+        }
+        .edit-panel.active { transform: translateY(0); }
+        textarea { width: 100%; height: 100px; padding: 12px; font-size: 16px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; }
+        #context-menu {
+            display: none; position: absolute; z-index: 2000;
+            background: white; border-radius: 10px; box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+            flex-direction: column; overflow: hidden;
+        }
+        #context-menu div { padding: 15px 25px; border-bottom: 1px solid #eee; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div class="ui-top">
+        <button onclick="createNewNode('text')" style="background:var(--txt-color)">＋ テキスト</button>
+        <button onclick="createNewNode('choice')" style="background:var(--chc-color)">＋ 選択肢</button>
+        <button onclick="exportData()" style="background:#27ae60">保存</button>
+        <button onclick="document.getElementById('fileInput').click()" style="background:#7f8c8d">読込</button>
+        <input type="file" id="fileInput" style="display:none" accept=".json">
+    </div>
+
+    <div id="network"></div>
+
+    <div id="edit-panel" class="edit-panel">
+        <h3 id="panel-type" style="margin:0 0 10px 0; font-size:12px; color:#999;"></h3>
+        <textarea id="node-text" oninput="updateContent()" placeholder="本文を入力..."></textarea>
+        <div id="choice-config" style="display:none; margin-top:10px;">
+            <label>分岐数: <select id="choice-num" onchange="syncChoices()"></select></label>
+        </div>
+        <button onclick="closePanel()" style="width:100%; margin-top:10px; background:#bdc3c7">完了</button>
+    </div>
+
+    <div id="context-menu">
+        <div onclick="toggleLock()">🔒 ロック切替</div>
+        <div onclick="copyNode()">📄 コピー</div>
+        <div onclick="deleteNode()" style="color:red">🗑 削除</div>
+    </div>
+
+    <script>
+        let nodes = new vis.DataSet([]);
+        let edges = new vis.DataSet([]);
+        let network = null;
+        let selectedId = null;
+        let menuId = null;
+
+        const sel = document.getElementById('choice-num');
+        for(let i=1; i<=9; i++) sel.add(new Option(i, i));
+
+        // ノードの共通設定（枠の描画とテキストの配置はvis-networkの標準機能に任せる）
+        const nodeOptions = {
+            nodes: {
+                shape: 'box',
+                widthConstraint: { minimum: 160, maximum: 160 },
+                font: { size: 14, align: 'left', color: '#333' },
+                // topマージンを40pxとることで、タイトルバーを描画する「空きスペース」を作る
+                margin: { top: 40, bottom: 15, left: 15, right: 15 },
+                borderWidth: 2,
+                shapeProperties: { borderRadius: 8 },
+                shadow: { enabled: true, color: 'rgba(0,0,0,0.15)', size: 8, x: 0, y: 4 }
+            },
+            edges: { 
+                arrows: 'to', 
+                color: '#aab7b8', 
+                smooth: { type: 'cubicBezier' }
+            },
+            physics: { enabled: false }
+        };
+
+        function init() {
+            network = new vis.Network(document.getElementById('network'), { nodes, edges }, nodeOptions);
+
+            // vis-networkが「枠」と「テキスト」を描画し終わった後に、タイトルバーだけを上部に被せる
+            network.on("afterDrawing", (ctx) => {
+                nodes.get().forEach(node => {
+                    const box = network.getBoundingBox(node.id);
+                    if(!box) return;
+                    const w = box.right - box.left;
+                    
+                    let color = "#7f8c8d";
+                    let title = "NODE";
+                    if(node.type === 'text') { color = "#2980b9"; title = "テキスト"; }
+                    else if(node.type === 'choice') { color = "#d35400"; title = "選択肢"; }
+                    else if(node.type === 'option') { color = "#f1c40f"; title = "子ノード"; }
+
+                    if (node.fixed) color = "#95a5a6";
+
+                    // タイトルバーを描画（高さ36px。テキストはmargin.top:40で下がっているため被らない）
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.roundRect(box.left, box.top, w, 36, [8, 8, 0, 0]);
+                    ctx.fill();
+
+                    // タイトルテキストを描画
+                    ctx.fillStyle = "white";
+                    ctx.font = "bold 13px sans-serif";
+                    ctx.fillText(title, box.left + 12, box.top + 23);
+                    if(node.fixed) ctx.fillText("🔒", box.right - 28, box.top + 23);
+                });
+            });
+
+            // 親ノード移動時の子ノード追従
+            network.on("dragging", (params) => {
+                if (params.nodes.length > 0) {
+                    const pId = params.nodes[0];
+                    const node = nodes.get(pId);
+                    if (node && node.type === 'choice') {
+                        const pPos = network.getPositions([pId])[pId];
+                        edges.get({ filter: e => e.from === pId && e.to.startsWith('opt_') }).forEach(e => {
+                            const offset = node.childOffsets?.[e.to] || { x: 220, y: 0 };
+                            nodes.update({ id: e.to, x: pPos.x + offset.x, y: pPos.y + offset.y });
+                        });
+                    }
+                }
+            });
+
+            network.on("click", (params) => {
+                hideMenu();
+                const id = params.nodes[0];
+                if(id) {
+                    if(selectedId && selectedId !== id) {
+                        linkNodes(selectedId, id);
+                        selectedId = null;
+                        closePanel();
+                    } else {
+                        selectedId = id;
+                        const node = nodes.get(id);
+                        if(!node.fixed) openPanel(node);
+                    }
+                } else {
+                    selectedId = null;
+                    closePanel();
+                }
+            });
+
+            network.on("hold", (params) => {
+                if(params.nodes[0]) {
+                    menuId = params.nodes[0];
+                    const menu = document.getElementById('context-menu');
+                    menu.style.display = 'flex';
+                    menu.style.left = params.pointer.DOM.x + "px";
+                    menu.style.top = params.pointer.DOM.y + "px";
+                }
+            });
+        }
+
+        // ノード種類ごとのカラー設定を取得
+        function getNodeColors(type, isLocked) {
+            if (isLocked) return { background: '#f5f7f8', border: '#95a5a6' };
+            if (type === 'text') return { background: '#ffffff', border: '#2980b9' };
+            if (type === 'choice') return { background: '#ffffff', border: '#d35400' };
+            if (type === 'option') return { background: '#ffffff', border: '#f1c40f' };
+            return { background: '#ffffff', border: '#333' };
+        }
+
+        function createNewNode(type) {
+            const id = `${type}_${Date.now()}_${Math.floor(Math.random()*1000)}`;
+            const center = network.getViewPosition();
+            const colors = getNodeColors(type, false);
+            
+            nodes.add({ 
+                id, type, label: "...", rawText: "", x: center.x, y: center.y, fixed: false,
+                color: colors
+            });
+
+            if(type === 'choice') {
+                nodes.update({ id, childCount: 2, childOffsets: {} });
+                setTimeout(() => syncChoicesManual(id, 2), 50);
+            }
+        }
+
+        function syncChoicesManual(parentId, count) {
+            const pos = network.getPositions([parentId])[parentId];
+            edges.get({ filter: e => e.from === parentId && e.to.startsWith('opt_') }).forEach(e => {
+                nodes.remove(e.to); edges.remove(e.id);
+            });
+            const offsets = {};
+            const optColors = getNodeColors('option', false);
+            
+            for(let i=1; i<=count; i++) {
+                const optId = `opt_${parentId}_${Date.now()}_${i}`;
+                const ox = 220, oy = (i - (count+1)/2) * 100;
+                nodes.add({ 
+                    id: optId, type: 'option', label: `選択肢${i}`, rawText: `選択肢${i}`, 
+                    x: pos.x + ox, y: pos.y + oy, color: optColors
+                });
+                edges.add({ from: parentId, to: optId });
+                offsets[optId] = { x: ox, y: oy };
+            }
+            nodes.update({ id: parentId, childCount: count, childOffsets: offsets });
+        }
+
+        function syncChoices() { syncChoicesManual(selectedId, parseInt(document.getElementById('choice-num').value)); }
+
+        function openPanel(node) {
+            const p = document.getElementById('edit-panel');
+            document.getElementById('panel-type').innerText = node.type.toUpperCase() + " SETTINGS";
+            document.getElementById('node-text').value = node.rawText || node.label;
+            document.getElementById('choice-config').style.display = (node.type === 'choice') ? 'block' : 'none';
+            if(node.type === 'choice') document.getElementById('choice-num').value = node.childCount;
+            p.classList.add('active');
+        }
+
+        function closePanel() { document.getElementById('edit-panel').classList.remove('active'); }
+
+        function updateContent() {
+            const text = document.getElementById('node-text').value;
+            const lines = text.split('\n');
+            const displayLabel = lines.length > 3 ? lines.slice(0, 3).join('\n') + '\n...' : text;
+            nodes.update({ id: selectedId, rawText: text, label: displayLabel || " " });
+        }
+
+        function linkNodes(from, to) {
+            const exists = edges.get({ filter: e => e.from === from && e.to === to });
+            if(exists.length > 0) edges.remove(exists[0].id);
+            else edges.add({ from, to });
+        }
+
+        function toggleLock() {
+            const n = nodes.get(menuId);
+            const isLocked = !n.fixed;
+            nodes.update({ 
+                id: menuId, fixed: isLocked, 
+                color: getNodeColors(n.type, isLocked)
+            });
+            hideMenu(); closePanel();
+        }
+
+        function deleteNode() { nodes.remove(menuId); hideMenu(); closePanel(); }
+
+        function copyNode() {
+            const n = nodes.get(menuId);
+            if(n.type === 'option') return;
+            createNewNode(n.type);
+            hideMenu();
+        }
+
+        function hideMenu() { document.getElementById('context-menu').style.display = 'none'; }
+
+        function exportData() {
+            const pos = network.getPositions();
+            const n = nodes.get().map(node => ({ ...node, x: pos[node.id].x, y: pos[node.id].y }));
+            const blob = new Blob([JSON.stringify({ nodes: n, edges: edges.get() })], { type: "application/json" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = `scenario.json`;
+            a.click();
+        }
+
+        init();
+    </script>
+</body>
+</html>
