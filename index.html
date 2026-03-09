@@ -3,51 +3,89 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Scenario Architect v7</title>
+    <title>Scenario Architect v8</title>
     <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <style>
-        * { box-sizing: border-box; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            margin: 0; padding: 0;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            overflow: hidden; background: #e8ecef;
+            overflow: hidden;
+            background: #e8ecef;
+            user-select: none;
         }
+
+        /* ── ネットワークキャンバス ── */
         #network { width: 100vw; height: 100vh; }
 
-        /* ── Toolbar ────────────────────────────────────── */
-        .toolbar {
-            position: absolute; top: 12px; left: 12px; z-index: 100;
-            display: flex; gap: 8px; flex-wrap: wrap;
-            max-width: calc(100vw - 240px);
+        /* ── タブバー（上部ボタン群） ── */
+        .tab-bar {
+            position: absolute; top: 0; left: 0; right: 0; height: 52px;
+            background: rgba(22, 33, 44, 0.94);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            display: flex; align-items: center; gap: 7px;
+            padding: 0 10px;
+            overflow-x: auto; overflow-y: hidden;
+            scrollbar-width: none;
+            z-index: 300;
+            border-bottom: 1px solid rgba(255,255,255,0.07);
         }
+        .tab-bar::-webkit-scrollbar { display: none; }
+
+        .tab-sep {
+            width: 1px; height: 24px; flex-shrink: 0;
+            background: rgba(255,255,255,0.15);
+        }
+
         .btn {
-            padding: 9px 13px; border-radius: 8px; border: none;
-            color: white; font-weight: 600; font-size: 13px; cursor: pointer;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.22);
-            transition: filter 0.15s, transform 0.1s;
-            white-space: nowrap; line-height: 1;
+            flex-shrink: 0;
+            padding: 7px 12px; border-radius: 7px; border: none;
+            color: white; font-weight: 600; font-size: 12px;
+            cursor: pointer; white-space: nowrap; line-height: 1;
+            transition: filter 0.12s, transform 0.1s, opacity 0.15s;
         }
-        .btn:hover   { filter: brightness(1.12); transform: translateY(-1px); }
-        .btn:active  { transform: translateY(0);  filter: brightness(0.95);   }
-        .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; filter: none; }
+        .btn:hover   { filter: brightness(1.2); transform: translateY(-1px); }
+        .btn:active  { transform: translateY(0); filter: brightness(0.9); }
+        .btn:disabled { opacity: 0.35; cursor: not-allowed;
+                        transform: none !important; filter: none !important; }
 
-        /* ── Minimap ─────────────────────────────────────── */
-        #minimap {
-            position: absolute; top: 12px; right: 12px; z-index: 100;
-            border-radius: 10px; cursor: crosshair;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.40);
-        }
-
-        /* ── Edit panel (bottom sheet) ───────────────────── */
+        /* ── ミニマップ ── */
         /*
-         * 旧実装の translateY(110%) では panel の高さによっては
-         * 下端からはみ出す問題があった。
-         * visibility + opacity + pointer-events の三点セットで
-         * 非表示時はレンダリング上もインタラクションも完全に無効化。
+         * スクロール中 / 終了後 1 秒間のみ表示。
+         * 非表示は opacity + pointer-events で制御し、
+         * キャンバスへのイベント干渉を防ぐ。
          */
-        .edit-panel {
+        #minimap {
+            position: absolute;
+            top: 62px;   /* タブバー (52px) + 余白 10px */
+            right: 12px;
+            z-index: 200;
+            border-radius: 10px;
+            cursor: crosshair;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.25s ease;
+            box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+        }
+        #minimap.visible { opacity: 1; pointer-events: all; }
+
+        /* ── 編集パネル（ボトムシート） ── */
+        /*
+         * 旧実装の translateY(110%) はパネル高さによって
+         * 下端からはみ出すことがあった。
+         * visibility + opacity で完全に非表示化し、
+         * transition delay で非表示アニメーション完了後に
+         * visibility: hidden を適用する。
+         */
+        #edit-panel {
             position: absolute; bottom: 34px; left: 0; right: 0;
-            background: white; padding: 16px;
+            background: white;
+            padding: 16px;
+            border-top: 3px solid #34495e;
+            border-radius: 20px 20px 0 0;
+            box-shadow: 0 -8px 24px rgba(0,0,0,0.12);
+            z-index: 500;
             visibility: hidden;
             opacity: 0;
             transform: translateY(100%);
@@ -56,12 +94,8 @@
                 transform  0.28s cubic-bezier(0.2, 0.9, 0.3, 1),
                 opacity    0.28s ease,
                 visibility 0s    0.28s;
-            z-index: 500;
-            border-top: 3px solid #34495e;
-            border-radius: 20px 20px 0 0;
-            box-shadow: 0 -8px 24px rgba(0,0,0,0.12);
         }
-        .edit-panel.active {
+        #edit-panel.open {
             visibility: visible;
             opacity: 1;
             transform: translateY(0);
@@ -71,134 +105,147 @@
                 opacity    0.28s ease,
                 visibility 0s    0s;
         }
-        .panel-label {
-            font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
-            color: #aaa; text-transform: uppercase; margin-bottom: 10px;
+
+        #edit-panel .panel-label {
+            font-size: 10px; font-weight: 700;
+            letter-spacing: 0.12em; color: #aaa;
+            text-transform: uppercase; margin-bottom: 10px;
         }
-        textarea {
-            width: 100%; height: 90px; padding: 10px 12px;
-            font-size: 15px; line-height: 1.6;
+        #edit-panel textarea {
+            width: 100%; height: 88px; padding: 10px 12px;
+            font-size: 15px; line-height: 1.6; font-family: inherit;
             border: 1.5px solid #dde1e7; border-radius: 8px;
-            resize: vertical; outline: none; font-family: inherit;
+            resize: vertical; outline: none;
         }
-        textarea:focus { border-color: #3498db; }
-        .choice-row {
+        #edit-panel textarea:focus { border-color: #3498db; }
+
+        #choice-config {
             margin-top: 10px; font-size: 14px; color: #555;
-            display: flex; align-items: center; gap: 8px;
+            display: none; align-items: center; gap: 8px;
         }
-        .choice-row select {
-            padding: 4px 10px; border: 1px solid #dde; border-radius: 6px; font-size: 14px;
+        #choice-config select {
+            padding: 4px 10px; border: 1px solid #dde;
+            border-radius: 6px; font-size: 14px;
         }
-        .btn-close {
+        #btn-close-panel {
             width: 100%; margin-top: 10px; padding: 10px;
             background: #ecf0f1; color: #555; border-radius: 8px;
             border: none; cursor: pointer; font-size: 14px; font-weight: 600;
         }
-        .btn-close:hover { background: #dfe4e6; }
+        #btn-close-panel:hover { background: #dfe4e6; }
 
-        /* ── Context menu ────────────────────────────────── */
-        #context-menu {
+        /* ── コンテキストメニュー ── */
+        #ctx-menu {
             display: none; position: absolute; z-index: 2000;
             background: white; border-radius: 12px;
             box-shadow: 0 8px 28px rgba(0,0,0,0.18);
-            flex-direction: column; overflow: hidden; min-width: 160px;
+            flex-direction: column; overflow: hidden; min-width: 155px;
         }
         .ctx-item {
-            padding: 13px 18px; cursor: pointer; font-size: 14px;
+            padding: 12px 16px; cursor: pointer; font-size: 14px;
             display: flex; align-items: center; gap: 10px;
         }
         .ctx-item:hover { background: #f5f7f9; }
         .ctx-item + .ctx-item { border-top: 1px solid #f0f0f0; }
-        .ctx-danger { color: #e74c3c; }
+        .ctx-item.danger { color: #e74c3c; }
 
-        /* ── Status bar ──────────────────────────────────── */
-        .status-bar {
+        /* ── ステータスバー ── */
+        #status-bar {
             position: absolute; bottom: 0; left: 0; right: 0; height: 34px;
-            background: rgba(22,34,46,0.92); display: flex; align-items: center;
-            padding: 0 16px; gap: 10px; font-size: 12px; color: #ccc;
-            z-index: 400; backdrop-filter: blur(4px);
+            background: rgba(18, 28, 38, 0.93);
+            backdrop-filter: blur(4px);
+            display: flex; align-items: center;
+            padding: 0 14px; gap: 10px;
+            font-size: 11px; color: #ccc; z-index: 400;
         }
-        .status-sep  { opacity: 0.25; }
-        .status-hint { margin-left: auto; opacity: 0.48; font-size: 11px; }
+        .st-sep  { opacity: 0.2; }
+        .st-hint { margin-left: auto; opacity: 0.4; font-size: 10px; }
     </style>
 </head>
 <body>
 
-<div class="toolbar">
-    <button class="btn" style="background:#2980b9" onclick="createNewNode('text')">+ テキスト</button>
-    <button class="btn" style="background:#c0392b" onclick="createNewNode('choice')">+ 選択肢</button>
-    <button class="btn" style="background:#27ae60" onclick="exportData()">保存</button>
-    <button class="btn" style="background:#7f8c8d" onclick="document.getElementById('fileInput').click()">読込</button>
-    <button class="btn" style="background:#8e44ad" onclick="exportImage()">画像出力</button>
-    <button class="btn" style="background:#16a085" onclick="fitView()" title="全ノードが収まるよう表示を合わせる">全体表示</button>
-    <button class="btn" id="btn-undo" style="background:#5d6d7e" onclick="undo()"  title="Ctrl+Z" disabled>元に戻す</button>
-    <button class="btn" id="btn-redo" style="background:#5d6d7e" onclick="redo()"  title="Ctrl+Y" disabled>やり直す</button>
-    <input type="file" id="fileInput" style="display:none" accept=".json" onchange="importData(event)">
+<!-- ── タブバー ── -->
+<div class="tab-bar">
+    <button class="btn" style="background:#2980b9" onclick="App.createNode('text')">＋ テキスト</button>
+    <button class="btn" style="background:#c0392b" onclick="App.createNode('choice')">＋ 選択肢</button>
+    <div class="tab-sep"></div>
+    <button class="btn" style="background:#27ae60" onclick="App.exportJson()">💾 保存</button>
+    <button class="btn" style="background:#7f8c8d" onclick="document.getElementById('file-input').click()">📂 読込</button>
+    <button class="btn" style="background:#8e44ad" onclick="App.exportImage()">🖼 画像</button>
+    <div class="tab-sep"></div>
+    <button class="btn" style="background:#16a085" onclick="App.fitView()">🎯 全体表示</button>
+    <div class="tab-sep"></div>
+    <button class="btn" id="btn-undo" style="background:#5d6d7e" onclick="App.undo()" disabled>↩ 元に戻す</button>
+    <button class="btn" id="btn-redo" style="background:#5d6d7e" onclick="App.redo()" disabled>↪ やり直す</button>
+    <input type="file" id="file-input" style="display:none" accept=".json" onchange="App.importJson(event)">
 </div>
 
-<canvas id="minimap" width="200" height="130" title="ミニマップ - クリックで移動"></canvas>
-
+<canvas id="minimap" width="200" height="130" title="ミニマップ — タップで移動"></canvas>
 <div id="network"></div>
 
-<div id="edit-panel" class="edit-panel">
-    <div class="panel-label" id="panel-type">NODE SETTINGS</div>
-    <textarea id="node-text" oninput="updateContent()" placeholder="本文を入力..."></textarea>
-    <div id="choice-config" class="choice-row" style="display:none">
-        分岐数: <select id="choice-num" onchange="syncChoices()"></select>
+<!-- ── 編集パネル ── -->
+<div id="edit-panel">
+    <div class="panel-label" id="panel-label">NODE SETTINGS</div>
+    <textarea id="panel-text" oninput="App.updateNodeText()" placeholder="本文を入力..."></textarea>
+    <div id="choice-config">
+        分岐数: <select id="choice-num" onchange="App.syncChoices()"></select>
     </div>
-    <button class="btn-close" onclick="closePanel()">完了</button>
+    <button id="btn-close-panel" onclick="App.closePanel()">完了</button>
 </div>
 
-<div id="context-menu">
-    <div class="ctx-item" onclick="toggleLock()">ロック切替</div>
-    <div class="ctx-item" onclick="copyNode()">コピー</div>
-    <div class="ctx-item ctx-danger" onclick="deleteNode()">削除</div>
+<!-- ── コンテキストメニュー ── -->
+<div id="ctx-menu">
+    <div class="ctx-item" onclick="App.toggleLock()">🔒 ロック切替</div>
+    <div class="ctx-item" onclick="App.copyNode()">📄 コピー</div>
+    <div class="ctx-item danger" onclick="App.deleteNode()">🗑 削除</div>
 </div>
 
-<div class="status-bar">
+<!-- ── ステータスバー ── -->
+<div id="status-bar">
     <span id="st-nodes">ノード: 0</span>
-    <span class="status-sep">|</span>
+    <span class="st-sep">|</span>
     <span id="st-edges">接続: 0</span>
-    <span class="status-hint">クリック: 選択/接続  長押し: メニュー  Del: 削除  Ctrl+Z/Y: Undo/Redo</span>
+    <span class="st-hint">クリック: 選択 / 接続　長押し: メニュー　Del: 削除　Ctrl+Z/Y: Undo/Redo</span>
 </div>
 
 <script>
-// ══════════════════════════════════════════════
+// ════════════════════════════════════════════════════════
 // 定数
-// ══════════════════════════════════════════════
-const NODE_W  = 188;
-const TITLE_H = 33;
-const LINE_H  = 17;
-const PAD     = 11;
+// ════════════════════════════════════════════════════════
+const CFG = Object.freeze({
+    // ノード描画
+    nodeW:   188,
+    titleH:  33,
+    lineH:   17,
+    pad:     11,
 
-const COLORS = { text:'#2980b9', choice:'#c0392b', option:'#e67e22', locked:'#95a5a6' };
-const LABELS = { text:'TEXT',    choice:'CHOICE',  option:'OPTION'  };
+    // ミニマップ
+    miniW:   200,
+    miniH:   130,
+    miniHideDelay: 1000, // ms
 
-const MINI_W = 200, MINI_H = 130;
-const BX = 4000, BY = 3000;           // スクロール上限 (±BX, ±BY)
+    // スクロール可能領域
+    boundX:  4000,
+    boundY:  3000,
 
-const MAX_HISTORY    = 50;
-const MAX_FILE_BYTES = 2 * 1024 * 1024;
-const MAX_NODES      = 500;
-const MAX_EDGES      = 2000;
-const MAX_STR        = 5000;
-const ALLOWED_TYPES  = new Set(['text', 'choice', 'option']);
+    // 履歴
+    maxHistory: 50,
 
-// ══════════════════════════════════════════════
-// アプリ状態
-// ══════════════════════════════════════════════
-let nodes      = new vis.DataSet([]);
-let edges      = new vis.DataSet([]);
-let network    = null;
-let selectedId = null;
-let menuId     = null;
-let undoStack  = [];
-let redoStack  = [];
+    // インポート検証
+    maxFileBytes: 2 * 1024 * 1024,
+    maxNodes:     500,
+    maxEdges:     2000,
+    maxStrLen:    5000,
+});
 
-// ══════════════════════════════════════════════
-// カスタムノード描画
-// ══════════════════════════════════════════════
-function rrPath(ctx, x, y, w, h, r) {
+const NODE_COLORS = Object.freeze({ text:'#2980b9', choice:'#c0392b', option:'#e67e22', locked:'#95a5a6' });
+const NODE_LABELS = Object.freeze({ text:'TEXT',    choice:'CHOICE',  option:'OPTION'  });
+const ALLOWED_TYPES = new Set(['text', 'choice', 'option']);
+
+// ════════════════════════════════════════════════════════
+// カスタムノード描画ユーティリティ
+// ════════════════════════════════════════════════════════
+function roundRectPath(ctx, x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);         ctx.lineTo(x + w - r, y);
     ctx.arcTo(x + w, y,     x + w, y + r,     r);
@@ -211,383 +258,92 @@ function rrPath(ctx, x, y, w, h, r) {
     ctx.closePath();
 }
 
-function ctxRendererFn({ ctx, id, x, y, state: { selected } }) {
-    const nd = nodes.get(id);
-    if (!nd) return { drawNode() {}, nodeDimensions: { width: NODE_W, height: 80 } };
+function makeCtxRenderer(nodesDS) {
+    return function({ ctx, id, x, y, state: { selected } }) {
+        const nd = nodesDS.get(id);
+        if (!nd) return { drawNode() {}, nodeDimensions: { width: CFG.nodeW, height: 80 } };
 
-    const type    = nd.type  || 'text';
-    const fixed   = nd.fixed || false;
-    const rawText = nd.rawText || nd.label || '';
-    const lines   = rawText.split('\n').slice(0, 4);
-    const bodyH   = Math.max(50, lines.length * LINE_H + PAD * 2);
-    const H       = TITLE_H + bodyH;
-    const lx      = x - NODE_W / 2;
-    const ty      = y - H / 2;
-    const tc      = fixed ? COLORS.locked : (COLORS[type] || '#7f8c8d');
+        const { type = 'text', fixed = false, rawText = '', label = '' } = nd;
+        const lines  = (rawText || label).split('\n').slice(0, 4);
+        const bodyH  = Math.max(50, lines.length * CFG.lineH + CFG.pad * 2);
+        const H      = CFG.titleH + bodyH;
+        const lx     = x - CFG.nodeW / 2;
+        const ty     = y - H / 2;
+        const color  = fixed ? NODE_COLORS.locked : (NODE_COLORS[type] || '#7f8c8d');
+        const W      = CFG.nodeW;
 
-    return {
-        drawNode() {
-            ctx.save();
-            ctx.shadowColor = 'rgba(0,0,0,0.13)'; ctx.shadowBlur = selected ? 14 : 8; ctx.shadowOffsetY = 3;
-            ctx.fillStyle = selected ? '#eef6ff' : '#fff';
-            rrPath(ctx, lx, ty, NODE_W, H, 8); ctx.fill();
-            ctx.restore();
+        return {
+            drawNode() {
+                // 影 + 背景
+                ctx.save();
+                ctx.shadowColor = 'rgba(0,0,0,0.12)';
+                ctx.shadowBlur  = selected ? 14 : 8;
+                ctx.shadowOffsetY = 3;
+                ctx.fillStyle = selected ? '#eef6ff' : '#fff';
+                roundRectPath(ctx, lx, ty, W, H, 8);
+                ctx.fill();
+                ctx.restore();
 
-            ctx.strokeStyle = selected ? tc : tc + 'aa';
-            ctx.lineWidth   = selected ? 2.5 : 1.5;
-            rrPath(ctx, lx, ty, NODE_W, H, 8); ctx.stroke();
+                // 外枠
+                ctx.strokeStyle = selected ? color : color + 'aa';
+                ctx.lineWidth   = selected ? 2.5 : 1.5;
+                roundRectPath(ctx, lx, ty, W, H, 8);
+                ctx.stroke();
 
-            ctx.save();
-            rrPath(ctx, lx, ty, NODE_W, H, 8); ctx.clip();
-            ctx.fillStyle = tc; ctx.fillRect(lx, ty, NODE_W, TITLE_H);
-            ctx.restore();
+                // タイトルバー（角丸でクリップして枠外に出ないようにする）
+                ctx.save();
+                roundRectPath(ctx, lx, ty, W, H, 8);
+                ctx.clip();
+                ctx.fillStyle = color;
+                ctx.fillRect(lx, ty, W, CFG.titleH);
+                ctx.restore();
 
-            ctx.save();
-            ctx.fillStyle = 'white'; ctx.font = 'bold 11px -apple-system,sans-serif';
-            ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-            ctx.fillText(LABELS[type] || 'NODE', lx + 10, ty + TITLE_H / 2);
-            if (fixed) { ctx.textAlign = 'right'; ctx.fillText('[locked]', lx + NODE_W - 8, ty + TITLE_H / 2); }
-            ctx.restore();
+                // タイトルテキスト
+                ctx.save();
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 11px -apple-system,sans-serif';
+                ctx.textBaseline = 'middle';
+                ctx.textAlign = 'left';
+                ctx.fillText(NODE_LABELS[type] || 'NODE', lx + 10, ty + CFG.titleH / 2);
+                if (fixed) {
+                    ctx.textAlign = 'right';
+                    ctx.fillText('[locked]', lx + W - 8, ty + CFG.titleH / 2);
+                }
+                ctx.restore();
 
-            ctx.save();
-            ctx.fillStyle = '#444'; ctx.font = '12px -apple-system,sans-serif';
-            ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-            lines.forEach((line, i) => {
-                if (line.length > 22) line = line.slice(0, 21) + '...';
-                ctx.fillText(line || ' ', lx + PAD, ty + TITLE_H + PAD + i * LINE_H);
-            });
-            ctx.restore();
-        },
-        nodeDimensions: { width: NODE_W, height: H }
+                // 本文
+                ctx.save();
+                ctx.fillStyle = '#444';
+                ctx.font = '12px -apple-system,sans-serif';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'top';
+                lines.forEach((line, i) => {
+                    if (line.length > 22) line = line.slice(0, 21) + '...';
+                    ctx.fillText(line || ' ', lx + CFG.pad, ty + CFG.titleH + CFG.pad + i * CFG.lineH);
+                });
+                ctx.restore();
+            },
+            nodeDimensions: { width: W, height: H }
+        };
     };
 }
 
-function makeNode(data) {
+// ════════════════════════════════════════════════════════
+// DataSet ヘルパー
+// ════════════════════════════════════════════════════════
+
+// JSON に関数は保存されないため、ロード / Undo 復元時に
+// ctxRenderer を再付与する。
+function attachRenderer(data, renderer) {
     const { ctxRenderer: _, shape: __, ...rest } = data;
-    return { shape: 'custom', ctxRenderer: ctxRendererFn, ...rest };
+    return { shape: 'custom', ctxRenderer: renderer, ...rest };
 }
 
-// ══════════════════════════════════════════════
-// 初期化
-// ══════════════════════════════════════════════
-const choiceSel = document.getElementById('choice-num');
-for (let i = 1; i <= 9; i++) choiceSel.add(new Option(i, i));
-
-function init() {
-    const opts = {
-        nodes: { shape: 'custom', ctxRenderer: ctxRendererFn },
-        edges: {
-            arrows: { to: { enabled: true, scaleFactor: 0.75 } },
-            color:  { color: '#b0bec5', highlight: '#2980b9', hover: '#78909c' },
-            smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.4 },
-            width: 1.5, hoverWidth: 2
-        },
-        physics:     { enabled: false },
-        interaction: { hover: true, multiselect: false, dragView: true, zoomView: true }
-    };
-
-    network = new vis.Network(document.getElementById('network'), { nodes, edges }, opts);
-
-    network.on('dragEnd', ({ nodes: nds }) => {
-        enforceBounds(); drawMinimap();
-        if (!nds.length) return;
-        const mv = nodes.get(nds[0]);
-        if (mv?.type !== 'option') return;
-        const pe = edges.get({ filter: e => e.to === nds[0] })[0];
-        if (!pe) return;
-        const parent = nodes.get(pe.from);
-        if (!parent || parent.type !== 'choice') return;
-        const pos = network.getPositions([pe.from, nds[0]]);
-        nodes.update({ id: pe.from, childOffsets: {
-            ...(parent.childOffsets || {}),
-            [nds[0]]: { x: pos[nds[0]].x - pos[pe.from].x, y: pos[nds[0]].y - pos[pe.from].y }
-        }});
-    });
-
-    network.on('dragging', ({ nodes: nds }) => {
-        drawMinimap();
-        if (!nds.length) return;
-        const pId = nds[0], parent = nodes.get(pId);
-        if (!parent || parent.type !== 'choice') return;
-        const childIds = parent.childIds || [];
-        if (!childIds.length) return;
-        const pPos = network.getPositions([pId])[pId];
-        nodes.update(childIds.map(cid => {
-            const off = parent.childOffsets?.[cid] || { x: 240, y: 0 };
-            return { id: cid, x: pPos.x + off.x, y: pPos.y + off.y };
-        }));
-    });
-
-    network.on('zoom', () => { enforceBounds(); drawMinimap(); });
-
-    network.on('click', ({ nodes: nds }) => {
-        hideMenu();
-        const id = nds[0];
-        if (id) {
-            if (selectedId && selectedId !== id) {
-                saveState(); linkNodes(selectedId, id);
-                selectedId = null; closePanel();
-            } else {
-                selectedId = id;
-                const nd = nodes.get(id);
-                if (nd && !nd.fixed) openPanel(nd);
-            }
-        } else { selectedId = null; closePanel(); }
-    });
-
-    network.on('hold', ({ nodes: nds, pointer }) => {
-        if (!nds.length) return;
-        menuId = nds[0];
-        const m = document.getElementById('context-menu');
-        m.style.display = 'flex';
-        m.style.left = pointer.DOM.x + 'px';
-        m.style.top  = pointer.DOM.y + 'px';
-    });
-
-    document.getElementById('minimap').addEventListener('click', e => {
-        const rect = e.target.getBoundingClientRect();
-        const mx = (e.clientX - rect.left) / MINI_W;
-        const my = (e.clientY - rect.top)  / MINI_H;
-        network.moveTo({
-            position:  { x: mx * BX * 2 - BX, y: my * BY * 2 - BY },
-            animation: { duration: 350, easingFunction: 'easeInOutQuad' }
-        });
-    });
-
-    nodes.on('*', () => { updateStatus(); drawMinimap(); });
-    edges.on('*', () => { updateStatus(); drawMinimap(); });
-    updateStatus(); drawMinimap();
-}
-
-// ══════════════════════════════════════════════
-// ミニマップ描画
-// ══════════════════════════════════════════════
-function drawMinimap() {
-    if (!network) return;
-    const mc = document.getElementById('minimap');
-    const mctx = mc.getContext('2d');
-
-    const wx = x => (x + BX) / (BX * 2) * MINI_W;
-    const wy = y => (y + BY) / (BY * 2) * MINI_H;
-
-    mctx.clearRect(0, 0, MINI_W, MINI_H);
-
-    mctx.fillStyle = 'rgba(16,26,36,0.91)';
-    rrPath(mctx, 0, 0, MINI_W, MINI_H, 10); mctx.fill();
-
-    mctx.strokeStyle = 'rgba(255,255,255,0.11)'; mctx.lineWidth = 1;
-    rrPath(mctx, 0.5, 0.5, MINI_W - 1, MINI_H - 1, 10); mctx.stroke();
-
-    const positions = network.getPositions();
-
-    mctx.strokeStyle = 'rgba(180,196,212,0.22)'; mctx.lineWidth = 0.7;
-    edges.get().forEach(e => {
-        const fp = positions[e.from], tp = positions[e.to];
-        if (!fp || !tp) return;
-        mctx.beginPath(); mctx.moveTo(wx(fp.x), wy(fp.y)); mctx.lineTo(wx(tp.x), wy(tp.y)); mctx.stroke();
-    });
-
-    nodes.get().forEach(n => {
-        const p = positions[n.id];
-        if (!p) return;
-        mctx.fillStyle = n.fixed ? COLORS.locked : (COLORS[n.type] || '#7f8c8d');
-        mctx.beginPath(); mctx.arc(wx(p.x), wy(p.y), n.type === 'option' ? 2.2 : 3.2, 0, Math.PI * 2); mctx.fill();
-    });
-
-    const scale = network.getScale();
-    const vp    = network.getViewPosition();
-    const vw    = window.innerWidth  / scale;
-    const vh    = window.innerHeight / scale;
-    const rx = wx(vp.x - vw / 2), ry = wy(vp.y - vh / 2);
-    const rw = vw / (BX * 2) * MINI_W, rh = vh / (BY * 2) * MINI_H;
-
-    mctx.strokeStyle = 'rgba(255,255,255,0.62)'; mctx.lineWidth = 1.5;
-    mctx.strokeRect(
-        Math.max(1, rx), Math.max(1, ry),
-        Math.min(MINI_W - Math.max(1, rx) - 1, rw),
-        Math.min(MINI_H - Math.max(1, ry) - 1, rh)
-    );
-
-    mctx.fillStyle = 'rgba(255,255,255,0.30)'; mctx.font = 'bold 8px sans-serif';
-    mctx.textAlign = 'right'; mctx.textBaseline = 'bottom';
-    mctx.fillText('MINIMAP', MINI_W - 6, MINI_H - 5);
-}
-
-// ══════════════════════════════════════════════
-// スクロール制限 / 全体表示
-// ══════════════════════════════════════════════
-function enforceBounds() {
-    if (!network) return;
-    const pos = network.getViewPosition();
-    const cx  = Math.max(-BX, Math.min(BX, pos.x));
-    const cy  = Math.max(-BY, Math.min(BY, pos.y));
-    if (cx !== pos.x || cy !== pos.y) {
-        network.moveTo({ position: { x: cx, y: cy }, animation: { duration: 200, easingFunction: 'easeOutQuad' } });
-    }
-}
-
-function fitView() {
-    if (!network) return;
-    if (nodes.length === 0) {
-        network.moveTo({ position: { x: 0, y: 0 }, scale: 1, animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
-    } else {
-        network.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
-    }
-}
-
-// ══════════════════════════════════════════════
-// Undo / Redo (各最大 MAX_HISTORY 段階)
-// ══════════════════════════════════════════════
-function getSnapshot() {
-    const pos = network ? network.getPositions() : {};
-    return JSON.stringify({
-        nodes: nodes.get().map(({ ctxRenderer: _, shape: __, ...n }) => ({
-            ...n, x: pos[n.id]?.x ?? n.x, y: pos[n.id]?.y ?? n.y
-        })),
-        edges: edges.get()
-    });
-}
-
-function saveState() {
-    undoStack.push(getSnapshot());
-    if (undoStack.length > MAX_HISTORY) undoStack.shift();
-    redoStack = [];
-    refreshHistoryBtns();
-}
-
-function applySnapshot(snap) {
-    const { nodes: ns, edges: es } = JSON.parse(snap);
-    nodes.clear(); edges.clear();
-    edges.add(es || []);
-    nodes.add((ns || []).map(n => makeNode(n)));
-    selectedId = null; closePanel(); updateStatus(); drawMinimap();
-}
-
-function undo() {
-    if (!undoStack.length) return;
-    redoStack.push(getSnapshot());
-    applySnapshot(undoStack.pop());
-    refreshHistoryBtns();
-}
-
-function redo() {
-    if (!redoStack.length) return;
-    undoStack.push(getSnapshot());
-    applySnapshot(redoStack.pop());
-    refreshHistoryBtns();
-}
-
-function refreshHistoryBtns() {
-    document.getElementById('btn-undo').disabled = undoStack.length === 0;
-    document.getElementById('btn-redo').disabled = redoStack.length === 0;
-}
-
-// ══════════════════════════════════════════════
-// ノード作成 / 選択肢同期
-// ══════════════════════════════════════════════
-function createNewNode(type) {
-    saveState();
-    const id     = `${type}_${Date.now()}`;
-    const center = network.getViewPosition();
-    nodes.add(makeNode({ id, type, label: '...', rawText: '', x: center.x, y: center.y, fixed: false }));
-    if (type === 'choice') setTimeout(() => syncChoicesManual(id, 2), 50);
-    selectedId = id; openPanel(nodes.get(id));
-}
-
-function syncChoicesManual(parentId, count) {
-    const pos    = network.getPositions([parentId])[parentId] || { x: 0, y: 0 };
-    const parent = nodes.get(parentId);
-    if (!parent) return;
-
-    const oldIds = parent.childIds || [];
-    if (oldIds.length) {
-        nodes.remove(oldIds);
-        edges.remove(edges.get({ filter: e => oldIds.includes(e.to) }).map(e => e.id));
-    }
-
-    const childIds = [], offsets = {};
-    for (let i = 1; i <= count; i++) {
-        const cid = `opt_${parentId}_${i}`;
-        const ox  = 240, oy = (i - (count + 1) / 2) * 110;
-        nodes.add(makeNode({ id: cid, type: 'option', label: `選択肢${i}`, rawText: `選択肢${i}`,
-            x: pos.x + ox, y: pos.y + oy, fixed: false }));
-        edges.add({ from: parentId, to: cid });
-        childIds.push(cid); offsets[cid] = { x: ox, y: oy };
-    }
-    nodes.update({ id: parentId, childIds, childOffsets: offsets, childCount: count });
-}
-
-function syncChoices() { saveState(); syncChoicesManual(selectedId, parseInt(choiceSel.value)); }
-
-// ══════════════════════════════════════════════
-// 編集パネル
-// ══════════════════════════════════════════════
-function openPanel(node) {
-    document.getElementById('panel-type').textContent = (LABELS[node.type] || 'NODE') + ' SETTINGS';
-    document.getElementById('node-text').value = node.rawText || '';
-    const cc = document.getElementById('choice-config');
-    cc.style.display = node.type === 'choice' ? 'flex' : 'none';
-    if (node.type === 'choice') choiceSel.value = node.childCount || 2;
-    document.getElementById('edit-panel').classList.add('active');
-    setTimeout(() => document.getElementById('node-text').focus(), 300);
-}
-
-function closePanel() { document.getElementById('edit-panel').classList.remove('active'); }
-
-function updateContent() {
-    if (!selectedId) return;
-    const text = document.getElementById('node-text').value;
-    nodes.update({ id: selectedId, rawText: text, label: text || ' ' });
-}
-
-// ══════════════════════════════════════════════
-// ノード操作
-// ══════════════════════════════════════════════
-function linkNodes(from, to) {
-    const exists = edges.get({ filter: e => e.from === from && e.to === to });
-    if (exists.length) edges.remove(exists[0].id);
-    else               edges.add({ from, to });
-}
-
-function toggleLock() {
-    saveState();
-    const n = nodes.get(menuId);
-    nodes.update({ id: menuId, fixed: !n.fixed });
-    hideMenu(); closePanel();
-}
-
-function deleteNode() {
-    saveState();
-    const n = nodes.get(menuId);
-    if (n?.type === 'choice' && n.childIds?.length) {
-        edges.remove(edges.get({ filter: e => n.childIds.includes(e.to) }).map(e => e.id));
-        nodes.remove(n.childIds);
-    }
-    edges.remove(edges.get({ filter: e => e.from === menuId || e.to === menuId }).map(e => e.id));
-    nodes.remove(menuId);
-    if (selectedId === menuId) { selectedId = null; closePanel(); }
-    hideMenu();
-}
-
-function copyNode() {
-    const n = nodes.get(menuId);
-    if (!n || n.type === 'option') return;
-    saveState();
-    const newId = `${n.type}_${Date.now()}_cp`;
-    const pos   = network.getPositions([menuId])[menuId];
-    nodes.add(makeNode({ id: newId, type: n.type, label: n.label, rawText: n.rawText,
-        x: pos.x + 30, y: pos.y + 30, fixed: false }));
-    if (n.type === 'choice') setTimeout(() => syncChoicesManual(newId, n.childCount || 2), 50);
-    hideMenu();
-}
-
-function hideMenu() { document.getElementById('context-menu').style.display = 'none'; }
-
-// ══════════════════════════════════════════════
+// ════════════════════════════════════════════════════════
 // 入力検証 & サニタイズ
-// ══════════════════════════════════════════════
+// ════════════════════════════════════════════════════════
 function sanitizeStr(val, maxLen) {
-    if (typeof val !== 'string') return '';
+    if (typeof val !== 'string') val = String(val ?? '');
     return val.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, maxLen);
 }
 
@@ -596,8 +352,8 @@ function clampNum(v, lo, hi, def) {
     return isFinite(n) ? Math.max(lo, Math.min(hi, n)) : def;
 }
 
-function validateAndSanitize(raw) {
-    if (raw.length > MAX_FILE_BYTES)
+function validateImport(raw) {
+    if (raw.length > CFG.maxFileBytes)
         throw new Error('ファイルサイズが上限 (2 MB) を超えています');
 
     let data;
@@ -605,144 +361,560 @@ function validateAndSanitize(raw) {
     catch { throw new Error('JSON パースに失敗しました（ファイルが破損している可能性があります）'); }
 
     if (typeof data !== 'object' || data === null || Array.isArray(data))
-        throw new Error('不正なフォーマット: トップレベルはオブジェクトである必要があります');
+        throw new Error('不正なフォーマット: トップレベルはオブジェクトが必要です');
 
     if (!Array.isArray(data.nodes))
-        throw new Error('"nodes" フィールドが配列ではありません');
-    if (data.nodes.length > MAX_NODES)
-        throw new Error(`ノード数が上限 (${MAX_NODES}) を超えています (${data.nodes.length})`);
+        throw new Error('"nodes" が配列ではありません');
+    if (data.nodes.length > CFG.maxNodes)
+        throw new Error(`ノード数が上限 (${CFG.maxNodes}) を超えています`);
 
-    const nodeIds = new Set();
-    const sanitizedNodes = data.nodes.map((n, i) => {
-        const c = `nodes[${i}]`;
-        if (typeof n !== 'object' || n === null) throw new Error(`${c}: 不正な値です`);
+    const knownIds = new Set();
+
+    const nodes = data.nodes.map((n, i) => {
+        if (typeof n !== 'object' || n === null)
+            throw new Error(`nodes[${i}]: 不正な値です`);
 
         const id = sanitizeStr(String(n.id ?? ''), 150);
-        if (!id)             throw new Error(`${c}: id が空または無効です`);
-        if (nodeIds.has(id)) throw new Error(`${c}: id が重複しています ("${id}")`);
-        nodeIds.add(id);
+        if (!id)               throw new Error(`nodes[${i}]: id が空です`);
+        if (knownIds.has(id))  throw new Error(`nodes[${i}]: id "${id}" が重複しています`);
+        knownIds.add(id);
 
         if (!ALLOWED_TYPES.has(n.type))
-            throw new Error(`${c}: 不正な type "${n.type}" (text/choice/option のみ許可)`);
+            throw new Error(`nodes[${i}]: 不正な type "${n.type}"`);
 
         const out = {
             id,
             type:    n.type,
-            rawText: sanitizeStr(n.rawText, MAX_STR),
+            rawText: sanitizeStr(n.rawText, CFG.maxStrLen),
             label:   sanitizeStr(n.label,   500),
-            x:       clampNum(n.x, -BX, BX, 0),
-            y:       clampNum(n.y, -BY, BY, 0),
-            fixed:   !!n.fixed,
+            x:       clampNum(n.x, -CFG.boundX, CFG.boundX, 0),
+            y:       clampNum(n.y, -CFG.boundY, CFG.boundY, 0),
+            fixed:   Boolean(n.fixed),
         };
 
         if (n.type === 'choice') {
             out.childCount = clampNum(n.childCount, 1, 9, 2);
-            if (Array.isArray(n.childIds)) {
-                out.childIds = n.childIds
-                    .filter(id => typeof id === 'string')
-                    .map(id => sanitizeStr(id, 150)).filter(Boolean).slice(0, 9);
-            }
+            if (Array.isArray(n.childIds))
+                out.childIds = n.childIds.map(s => sanitizeStr(String(s), 150)).filter(Boolean).slice(0, 9);
             if (n.childOffsets && typeof n.childOffsets === 'object' && !Array.isArray(n.childOffsets)) {
-                const co = {};
-                for (const [k, v] of Object.entries(n.childOffsets)) {
-                    if (typeof v === 'object' && v !== null) {
-                        co[sanitizeStr(k, 150)] = {
+                out.childOffsets = Object.fromEntries(
+                    Object.entries(n.childOffsets)
+                        .filter(([, v]) => v && typeof v === 'object')
+                        .map(([k, v]) => [sanitizeStr(k, 150), {
                             x: clampNum(v.x, -2000, 2000, 240),
-                            y: clampNum(v.y, -2000, 2000, 0)
-                        };
-                    }
-                }
-                out.childOffsets = co;
+                            y: clampNum(v.y, -2000, 2000, 0),
+                        }])
+                );
             }
         }
         return out;
     });
 
     if (!Array.isArray(data.edges))
-        throw new Error('"edges" フィールドが配列ではありません');
-    if (data.edges.length > MAX_EDGES)
-        throw new Error(`エッジ数が上限 (${MAX_EDGES}) を超えています`);
+        throw new Error('"edges" が配列ではありません');
+    if (data.edges.length > CFG.maxEdges)
+        throw new Error(`エッジ数が上限 (${CFG.maxEdges}) を超えています`);
 
-    const sanitizedEdges = data.edges.map((e, i) => {
-        const c = `edges[${i}]`;
-        if (typeof e !== 'object' || e === null) throw new Error(`${c}: 不正な値です`);
+    const edges = data.edges.map((e, i) => {
+        if (typeof e !== 'object' || e === null)
+            throw new Error(`edges[${i}]: 不正な値です`);
         const from = sanitizeStr(String(e.from ?? ''), 150);
         const to   = sanitizeStr(String(e.to   ?? ''), 150);
-        if (!nodeIds.has(from)) throw new Error(`${c}: 存在しない from ノード ("${from}")`);
-        if (!nodeIds.has(to))   throw new Error(`${c}: 存在しない to ノード ("${to}")`);
-        if (from === to)        throw new Error(`${c}: 自己ループは許可されていません`);
+        if (!knownIds.has(from)) throw new Error(`edges[${i}]: 存在しない from ノード "${from}"`);
+        if (!knownIds.has(to))   throw new Error(`edges[${i}]: 存在しない to ノード "${to}"`);
+        if (from === to)         throw new Error(`edges[${i}]: 自己ループは許可されていません`);
         return { from, to };
     });
 
-    return { nodes: sanitizedNodes, edges: sanitizedEdges };
+    return { nodes, edges };
 }
 
-// ══════════════════════════════════════════════
-// Import / Export
-// ══════════════════════════════════════════════
-function exportData() {
-    const pos = network.getPositions();
-    const ns  = nodes.get().map(({ ctxRenderer: _, shape: __, ...n }) => ({
-        ...n, x: pos[n.id]?.x ?? n.x, y: pos[n.id]?.y ?? n.y
-    }));
-    tap(Object.assign(document.createElement('a'), {
-        href:     URL.createObjectURL(new Blob([JSON.stringify({ nodes: ns, edges: edges.get() }, null, 2)], { type: 'application/json' })),
-        download: `scenario_${today()}.json`
-    }));
-}
+// ════════════════════════════════════════════════════════
+// アプリ本体
+// ════════════════════════════════════════════════════════
+const App = (() => {
+    // ── データ ──────────────────────────────────────────
+    const nodesDS   = new vis.DataSet([]);
+    const edgesDS   = new vis.DataSet([]);
+    let   network   = null;
 
-function importData(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    e.target.value = '';
-    const reader = new FileReader();
-    reader.onload = ev => {
-        try {
-            const { nodes: ns, edges: es } = validateAndSanitize(ev.target.result);
-            saveState();
-            nodes.clear(); edges.clear();
-            edges.add(es); nodes.add(ns.map(n => makeNode(n)));
-            network.fit({ animation: true });
-        } catch (err) { alert('読込エラー\n\n' + err.message); }
-    };
-    reader.readAsText(file);
-}
+    // ── UI 状態 ─────────────────────────────────────────
+    let selectedId   = null;  // 選択中ノード (接続操作に使用)
+    let ctxTargetId  = null;  // コンテキストメニューのターゲット
 
-function exportImage() {
-    tap(Object.assign(document.createElement('a'), {
-        href:     network.canvas.frame.canvas.toDataURL('image/png'),
-        download: `scenario_${today()}.png`
-    }));
-}
+    // ── Undo / Redo スタック ─────────────────────────────
+    let undoStack = [];
+    let redoStack = [];
 
-function tap(a) { document.body.appendChild(a); a.click(); a.remove(); }
-function today() { return new Date().toISOString().slice(0, 10); }
+    // ── ミニマップタイマー ───────────────────────────────
+    let minimapTimer = null;
 
-// ══════════════════════════════════════════════
-// ステータスバー
-// ══════════════════════════════════════════════
-function updateStatus() {
-    document.getElementById('st-nodes').textContent = `ノード: ${nodes.length}`;
-    document.getElementById('st-edges').textContent = `接続: ${edges.length}`;
-}
+    // ── ctxRenderer（DataSet 参照が必要なため App スコープで生成）
+    let renderer = null;
 
-// ══════════════════════════════════════════════
-// キーボードショートカット
-// ══════════════════════════════════════════════
-document.addEventListener('keydown', e => {
-    if (['TEXTAREA','INPUT','SELECT'].includes(e.target.tagName)) return;
-    if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedId) { menuId = selectedId; deleteNode(); }
+    // ── 選択肢数 select の初期化 ────────────────────────
+    const choiceNumSel = document.getElementById('choice-num');
+    for (let i = 1; i <= 9; i++) choiceNumSel.add(new Option(i, i));
+
+    // ════════════════════════════════════════════════════
+    // ミニマップ
+    // ════════════════════════════════════════════════════
+    const minimapEl = document.getElementById('minimap');
+
+    function showMinimap() {
+        clearTimeout(minimapTimer);
+        minimapEl.classList.add('visible');
     }
-    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); }
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); redo(); }
-});
 
-document.addEventListener('click', e => {
-    if (!document.getElementById('context-menu').contains(e.target)) hideMenu();
-});
+    function scheduleMinimap() {
+        clearTimeout(minimapTimer);
+        minimapTimer = setTimeout(hideMinimap, CFG.miniHideDelay);
+    }
 
-init();
+    function hideMinimap() {
+        minimapEl.classList.remove('visible');
+    }
+
+    function drawMinimap() {
+        if (!network) return;
+        const ctx = minimapEl.getContext('2d');
+        const { miniW: W, miniH: H, boundX: BX, boundY: BY } = CFG;
+
+        const toMX = x => (x + BX) / (BX * 2) * W;
+        const toMY = y => (y + BY) / (BY * 2) * H;
+
+        ctx.clearRect(0, 0, W, H);
+
+        // 背景
+        ctx.fillStyle = 'rgba(14,24,34,0.92)';
+        roundRectPath(ctx, 0, 0, W, H, 10); ctx.fill();
+
+        // 枠
+        ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1;
+        roundRectPath(ctx, 0.5, 0.5, W - 1, H - 1, 10); ctx.stroke();
+
+        const positions = network.getPositions();
+
+        // エッジ
+        ctx.strokeStyle = 'rgba(180,196,212,0.20)'; ctx.lineWidth = 0.7;
+        edgesDS.get().forEach(({ from, to }) => {
+            const fp = positions[from], tp = positions[to];
+            if (!fp || !tp) return;
+            ctx.beginPath(); ctx.moveTo(toMX(fp.x), toMY(fp.y));
+            ctx.lineTo(toMX(tp.x), toMY(tp.y)); ctx.stroke();
+        });
+
+        // ノード
+        nodesDS.get().forEach(n => {
+            const p = positions[n.id]; if (!p) return;
+            ctx.fillStyle = n.fixed ? NODE_COLORS.locked : (NODE_COLORS[n.type] || '#7f8c8d');
+            ctx.beginPath();
+            ctx.arc(toMX(p.x), toMY(p.y), n.type === 'option' ? 2.2 : 3.2, 0, Math.PI * 2);
+            ctx.fill();
+        });
+
+        // ビューポート枠
+        const scale = network.getScale();
+        const vp    = network.getViewPosition();
+        const vw    = window.innerWidth  / scale;
+        const vh    = window.innerHeight / scale;
+        const rx = Math.max(1, toMX(vp.x - vw / 2));
+        const ry = Math.max(1, toMY(vp.y - vh / 2));
+        const rw = Math.min(W - rx - 1, vw / (BX * 2) * W);
+        const rh = Math.min(H - ry - 1, vh / (BY * 2) * H);
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.lineWidth = 1.5;
+        ctx.strokeRect(rx, ry, rw, rh);
+
+        // ラベル
+        ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.font = 'bold 8px sans-serif';
+        ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+        ctx.fillText('MINIMAP', W - 6, H - 5);
+    }
+
+    // ミニマップクリック → カメラをその座標へ移動
+    minimapEl.addEventListener('click', e => {
+        if (!network) return;
+        const rect = minimapEl.getBoundingClientRect();
+        const mx   = (e.clientX - rect.left) / CFG.miniW;
+        const my   = (e.clientY - rect.top)  / CFG.miniH;
+        network.moveTo({
+            position:  { x: mx * CFG.boundX * 2 - CFG.boundX, y: my * CFG.boundY * 2 - CFG.boundY },
+            animation: { duration: 320, easingFunction: 'easeInOutQuad' }
+        });
+        scheduleMinimap();
+    });
+
+    // ════════════════════════════════════════════════════
+    // スクロール制限
+    // ════════════════════════════════════════════════════
+    function enforceBounds() {
+        if (!network) return;
+        const { x, y } = network.getViewPosition();
+        const cx = Math.max(-CFG.boundX, Math.min(CFG.boundX, x));
+        const cy = Math.max(-CFG.boundY, Math.min(CFG.boundY, y));
+        if (cx !== x || cy !== y)
+            network.moveTo({ position: { x: cx, y: cy }, animation: { duration: 180, easingFunction: 'easeOutQuad' } });
+    }
+
+    // ════════════════════════════════════════════════════
+    // Undo / Redo
+    // ════════════════════════════════════════════════════
+    function snapshot() {
+        const pos = network?.getPositions() ?? {};
+        return JSON.stringify({
+            nodes: nodesDS.get().map(({ ctxRenderer: _, shape: __, ...n }) => ({
+                ...n, x: pos[n.id]?.x ?? n.x, y: pos[n.id]?.y ?? n.y
+            })),
+            edges: edgesDS.get()
+        });
+    }
+
+    function saveState() {
+        undoStack.push(snapshot());
+        if (undoStack.length > CFG.maxHistory) undoStack.shift();
+        redoStack = [];
+        syncHistoryButtons();
+    }
+
+    function applySnapshot(json) {
+        const { nodes: ns, edges: es } = JSON.parse(json);
+        nodesDS.clear(); edgesDS.clear();
+        edgesDS.add(es ?? []);
+        nodesDS.add((ns ?? []).map(n => attachRenderer(n, renderer)));
+        selectedId = null; closePanel(); syncStatus(); drawMinimap();
+    }
+
+    function syncHistoryButtons() {
+        document.getElementById('btn-undo').disabled = undoStack.length === 0;
+        document.getElementById('btn-redo').disabled = redoStack.length === 0;
+    }
+
+    function undo() {
+        if (!undoStack.length) return;
+        redoStack.push(snapshot());
+        applySnapshot(undoStack.pop());
+        syncHistoryButtons();
+    }
+
+    function redo() {
+        if (!redoStack.length) return;
+        undoStack.push(snapshot());
+        applySnapshot(redoStack.pop());
+        syncHistoryButtons();
+    }
+
+    // ════════════════════════════════════════════════════
+    // ノード操作
+    // ════════════════════════════════════════════════════
+    function makeNode(data) { return attachRenderer(data, renderer); }
+
+    function createNode(type) {
+        saveState();
+        const id     = `${type}_${Date.now()}`;
+        const center = network.getViewPosition();
+        nodesDS.add(makeNode({ id, type, rawText: '', label: '...', x: center.x, y: center.y, fixed: false }));
+        if (type === 'choice') setTimeout(() => buildChoiceChildren(id, 2), 50);
+        selectedId = id;
+        openPanel(nodesDS.get(id));
+    }
+
+    // CHOICE の子 OPTION ノードを再構築する。
+    // 既存の子は一括削除してから生成し直す。
+    function buildChoiceChildren(parentId, count) {
+        const parent = nodesDS.get(parentId);
+        if (!parent) return;
+        const pos = network.getPositions([parentId])[parentId] ?? { x: 0, y: 0 };
+
+        // 既存の子を削除
+        const oldIds = parent.childIds ?? [];
+        if (oldIds.length) {
+            nodesDS.remove(oldIds);
+            edgesDS.remove(edgesDS.get({ filter: e => oldIds.includes(e.to) }).map(e => e.id));
+        }
+
+        const childIds = [], offsets = {};
+        for (let i = 1; i <= count; i++) {
+            const cid = `opt_${parentId}_${i}`;
+            const ox  = 240;
+            const oy  = (i - (count + 1) / 2) * 110;
+            nodesDS.add(makeNode({ id: cid, type: 'option', rawText: `選択肢${i}`, label: `選択肢${i}`,
+                x: pos.x + ox, y: pos.y + oy, fixed: false }));
+            edgesDS.add({ from: parentId, to: cid });
+            childIds.push(cid);
+            offsets[cid] = { x: ox, y: oy };
+        }
+        nodesDS.update({ id: parentId, childIds, childOffsets: offsets, childCount: count });
+    }
+
+    function deleteNodeById(id) {
+        const n = nodesDS.get(id);
+        if (!n) return;
+        if (n.type === 'choice' && n.childIds?.length) {
+            edgesDS.remove(edgesDS.get({ filter: e => n.childIds.includes(e.to) }).map(e => e.id));
+            nodesDS.remove(n.childIds);
+        }
+        edgesDS.remove(edgesDS.get({ filter: e => e.from === id || e.to === id }).map(e => e.id));
+        nodesDS.remove(id);
+    }
+
+    function toggleEdge(from, to) {
+        const existing = edgesDS.get({ filter: e => e.from === from && e.to === to });
+        if (existing.length) edgesDS.remove(existing[0].id);
+        else                 edgesDS.add({ from, to });
+    }
+
+    // ════════════════════════════════════════════════════
+    // 編集パネル
+    // ════════════════════════════════════════════════════
+    function openPanel(node) {
+        document.getElementById('panel-label').textContent = (NODE_LABELS[node.type] ?? 'NODE') + ' SETTINGS';
+        document.getElementById('panel-text').value = node.rawText ?? '';
+        const cc = document.getElementById('choice-config');
+        cc.style.display = node.type === 'choice' ? 'flex' : 'none';
+        if (node.type === 'choice') choiceNumSel.value = node.childCount ?? 2;
+        document.getElementById('edit-panel').classList.add('open');
+        setTimeout(() => document.getElementById('panel-text').focus(), 300);
+    }
+
+    function closePanel() {
+        document.getElementById('edit-panel').classList.remove('open');
+    }
+
+    // ════════════════════════════════════════════════════
+    // ステータスバー
+    // ════════════════════════════════════════════════════
+    function syncStatus() {
+        document.getElementById('st-nodes').textContent = `ノード: ${nodesDS.length}`;
+        document.getElementById('st-edges').textContent = `接続: ${edgesDS.length}`;
+    }
+
+    // ════════════════════════════════════════════════════
+    // コンテキストメニュー
+    // ════════════════════════════════════════════════════
+    const ctxMenuEl = document.getElementById('ctx-menu');
+
+    function showCtxMenu(nodeId, domX, domY) {
+        ctxTargetId = nodeId;
+        ctxMenuEl.style.cssText = `display:flex; left:${domX}px; top:${domY}px;`;
+    }
+
+    function hideCtxMenu() { ctxMenuEl.style.display = 'none'; }
+
+    // ════════════════════════════════════════════════════
+    // vis-network 初期化
+    // ════════════════════════════════════════════════════
+    function init() {
+        renderer = makeCtxRenderer(nodesDS);
+
+        network = new vis.Network(
+            document.getElementById('network'),
+            { nodes: nodesDS, edges: edgesDS },
+            {
+                nodes: { shape: 'custom', ctxRenderer: renderer },
+                edges: {
+                    arrows: { to: { enabled: true, scaleFactor: 0.75 } },
+                    color:  { color: '#b0bec5', highlight: '#2980b9', hover: '#78909c' },
+                    smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.4 },
+                    width: 1.5, hoverWidth: 2,
+                },
+                physics: { enabled: false },
+                // false にしないと複数ノードが意図せず選択されて
+                // 一括ドラッグが起きる（v6 以前のバグ）
+                interaction: { hover: true, multiselect: false, dragView: true, zoomView: true },
+            }
+        );
+
+        // ── ドラッグ中: ミニマップ表示 & CHOICE 子追従 ──
+        network.on('dragging', ({ nodes: nds }) => {
+            showMinimap(); drawMinimap();
+            if (!nds.length) return;
+            const parent = nodesDS.get(nds[0]);
+            if (!parent || parent.type !== 'choice' || !parent.childIds?.length) return;
+            const pPos = network.getPositions([nds[0]])[nds[0]];
+            nodesDS.update(parent.childIds.map(cid => {
+                const off = parent.childOffsets?.[cid] ?? { x: 240, y: 0 };
+                return { id: cid, x: pPos.x + off.x, y: pPos.y + off.y };
+            }));
+        });
+
+        // ── ドラッグ終了: option の新オフセット記録 & ミニマップ非表示予約 ──
+        network.on('dragEnd', ({ nodes: nds }) => {
+            enforceBounds(); drawMinimap(); scheduleMinimap();
+            if (!nds.length) return;
+            const moved = nodesDS.get(nds[0]);
+            if (moved?.type !== 'option') return;
+            const parentEdge = edgesDS.get({ filter: e => e.to === nds[0] })[0];
+            if (!parentEdge) return;
+            const parent = nodesDS.get(parentEdge.from);
+            if (!parent || parent.type !== 'choice') return;
+            const pos = network.getPositions([parentEdge.from, nds[0]]);
+            nodesDS.update({ id: parent.id, childOffsets: {
+                ...(parent.childOffsets ?? {}),
+                [nds[0]]: { x: pos[nds[0]].x - pos[parent.id].x, y: pos[nds[0]].y - pos[parent.id].y }
+            }});
+        });
+
+        // ── ズーム: ミニマップ表示 & 制限 ──
+        network.on('zoom', () => { showMinimap(); drawMinimap(); scheduleMinimap(); enforceBounds(); });
+
+        // ── クリック: 選択 / 接続 ──
+        network.on('click', ({ nodes: nds }) => {
+            hideCtxMenu(); hideMinimap();
+            const id = nds[0];
+            if (id) {
+                if (selectedId && selectedId !== id) {
+                    saveState(); toggleEdge(selectedId, id);
+                    selectedId = null; closePanel();
+                } else {
+                    selectedId = id;
+                    const nd = nodesDS.get(id);
+                    if (nd && !nd.fixed) openPanel(nd);
+                }
+            } else {
+                selectedId = null; closePanel();
+            }
+        });
+
+        // ── 長押し: コンテキストメニュー ──
+        network.on('hold', ({ nodes: nds, pointer }) => {
+            if (!nds.length) return;
+            showCtxMenu(nds[0], pointer.DOM.x, pointer.DOM.y);
+        });
+
+        nodesDS.on('*', syncStatus);
+        edgesDS.on('*', syncStatus);
+        syncStatus();
+    }
+
+    // ════════════════════════════════════════════════════
+    // Import / Export
+    // ════════════════════════════════════════════════════
+    function downloadAs(href, filename) {
+        const a = Object.assign(document.createElement('a'), { href, download: filename });
+        document.body.appendChild(a); a.click(); a.remove();
+    }
+
+    function exportJson() {
+        const pos = network.getPositions();
+        const ns  = nodesDS.get().map(({ ctxRenderer: _, shape: __, ...n }) => ({
+            ...n, x: pos[n.id]?.x ?? n.x, y: pos[n.id]?.y ?? n.y
+        }));
+        const blob = new Blob([JSON.stringify({ nodes: ns, edges: edgesDS.get() }, null, 2)], { type: 'application/json' });
+        downloadAs(URL.createObjectURL(blob), `scenario_${isoDate()}.json`);
+    }
+
+    function importJson(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        event.target.value = '';
+        const reader = new FileReader();
+        reader.onload = ev => {
+            try {
+                const { nodes: ns, edges: es } = validateImport(ev.target.result);
+                saveState();
+                nodesDS.clear(); edgesDS.clear();
+                edgesDS.add(es);
+                nodesDS.add(ns.map(n => makeNode(n)));
+                network.fit({ animation: true });
+            } catch (err) {
+                alert('読込エラー\n\n' + err.message);
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    function exportImage() {
+        downloadAs(network.canvas.frame.canvas.toDataURL('image/png'), `scenario_${isoDate()}.png`);
+    }
+
+    function fitView() {
+        if (!network) return;
+        const anim = { duration: 400, easingFunction: 'easeInOutQuad' };
+        nodesDS.length ? network.fit({ animation: anim }) : network.moveTo({ position: { x: 0, y: 0 }, scale: 1, animation: anim });
+    }
+
+    function isoDate() { return new Date().toISOString().slice(0, 10); }
+
+    // ════════════════════════════════════════════════════
+    // キーボードショートカット
+    // ════════════════════════════════════════════════════
+    document.addEventListener('keydown', e => {
+        if (['TEXTAREA','INPUT','SELECT'].includes(e.target.tagName)) return;
+        const ctrl = e.ctrlKey || e.metaKey;
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+            saveState(); deleteNodeById(selectedId);
+            if (selectedId) { selectedId = null; closePanel(); }
+        }
+        if (ctrl && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); }
+        if (ctrl && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); redo(); }
+    });
+
+    // コンテキストメニュー外クリックで閉じる
+    document.addEventListener('click', e => {
+        if (!ctxMenuEl.contains(e.target)) hideCtxMenu();
+    });
+
+    // ════════════════════════════════════════════════════
+    // 公開 API（HTML の onclick から呼び出す）
+    // ════════════════════════════════════════════════════
+    return {
+        // 初期化
+        init,
+
+        // ノード作成
+        createNode,
+
+        // 編集パネル
+        closePanel,
+        updateNodeText() {
+            if (!selectedId) return;
+            const text = document.getElementById('panel-text').value;
+            nodesDS.update({ id: selectedId, rawText: text, label: text || ' ' });
+        },
+        syncChoices() {
+            saveState();
+            buildChoiceChildren(selectedId, parseInt(choiceNumSel.value));
+        },
+
+        // コンテキストメニュー操作
+        toggleLock() {
+            if (!ctxTargetId) return;
+            saveState();
+            const n = nodesDS.get(ctxTargetId);
+            nodesDS.update({ id: ctxTargetId, fixed: !n.fixed });
+            hideCtxMenu(); closePanel();
+        },
+        copyNode() {
+            const n = nodesDS.get(ctxTargetId);
+            if (!n || n.type === 'option') return;
+            saveState();
+            const pos   = network.getPositions([ctxTargetId])[ctxTargetId];
+            const newId = `${n.type}_${Date.now()}_cp`;
+            nodesDS.add(makeNode({ id: newId, type: n.type, rawText: n.rawText, label: n.label,
+                x: pos.x + 30, y: pos.y + 30, fixed: false }));
+            if (n.type === 'choice') setTimeout(() => buildChoiceChildren(newId, n.childCount ?? 2), 50);
+            hideCtxMenu();
+        },
+        deleteNode() {
+            if (!ctxTargetId) return;
+            saveState(); deleteNodeById(ctxTargetId);
+            if (selectedId === ctxTargetId) { selectedId = null; closePanel(); }
+            hideCtxMenu();
+        },
+
+        // Undo / Redo
+        undo, redo,
+
+        // 表示
+        fitView,
+
+        // IO
+        exportJson, importJson, exportImage,
+    };
+})();
+
+App.init();
 </script>
 </body>
 </html>
