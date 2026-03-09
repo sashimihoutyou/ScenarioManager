@@ -10,49 +10,36 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            overflow: hidden;
-            background: #e8ecef;
-            user-select: none;
-            -webkit-user-select: none;
+            overflow: hidden; background: #e8ecef;
+            user-select: none; -webkit-user-select: none;
         }
 
-        /* ─── ネットワークキャンバス ─────────────────────────────
-         * position: absolute + 明示的な top/left/width/height で
-         * vis-network が getBoundingClientRect() でキャンバス位置を
-         * 取得する際のオフセットを排除し、タップ座標の変換を正確にする。
-         * (document flow に依存すると一部ブラウザで微妙なズレが生じる)
-         * ─────────────────────────────────────────────────────── */
+        /* ── ネットワークキャンバス ────────────────────────────
+         * position: absolute で document flow から切り離し、
+         * vis-network の getBoundingClientRect() によるタップ座標
+         * 変換を正確にする。
+         * ─────────────────────────────────────────────────── */
         #network {
-            position: absolute;
-            top: 0; left: 0;
+            position: absolute; top: 0; left: 0;
             width: 100%; height: 100%;
         }
 
-        /* ─── タブバー ──────────────────────────────────────────── */
+        /* ── タブバー ───────────────────────────────────────── */
         .tab-bar {
             position: absolute; top: 0; left: 0; right: 0;
             height: 52px; z-index: 300;
-            background: rgba(22, 33, 44, 0.94);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
+            background: rgba(22,33,44,0.94);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
             border-bottom: 1px solid rgba(255,255,255,0.07);
             display: flex; align-items: center; gap: 7px; padding: 0 10px;
-            /* iOS でも慣性スクロールさせる */
             overflow-x: auto; overflow-y: hidden;
-            -webkit-overflow-scrolling: touch;
-            scrollbar-width: none;
+            -webkit-overflow-scrolling: touch; scrollbar-width: none;
         }
         .tab-bar::-webkit-scrollbar { display: none; }
-
-        .tab-sep {
-            flex-shrink: 0;
-            width: 1px; height: 24px;
-            background: rgba(255,255,255,0.15);
-        }
+        .tab-sep { flex-shrink: 0; width: 1px; height: 24px; background: rgba(255,255,255,0.15); }
 
         .btn {
-            flex-shrink: 0;
-            padding: 7px 12px; border-radius: 7px; border: none;
+            flex-shrink: 0; padding: 7px 12px; border-radius: 7px; border: none;
             color: white; font-weight: 600; font-size: 12px;
             cursor: pointer; white-space: nowrap; line-height: 1;
             transition: filter 0.12s, transform 0.1s;
@@ -62,87 +49,85 @@
         .btn:disabled { opacity: 0.35; cursor: not-allowed;
                         filter: none !important; transform: none !important; }
 
-        /* ─── ミニマップ ────────────────────────────────────────
-         * スクロール / ズーム中と、終了後 miniHideDelay ms の間のみ表示。
-         * ノード以外をタップすると即座に非表示。
-         * opacity + pointer-events の組み合わせで制御し、
-         * 非表示時はキャンバスへのタッチ操作を妨げない。
-         * ─────────────────────────────────────────────────────── */
+        /* ── ミニマップ ─────────────────────────────────────────
+         * スクロール/ズーム中と終了後 miniHideDelay ms のみ表示。
+         * ミニマップ以外をタップすると即座に非表示。
+         * opacity + pointer-events で非表示時のタッチ干渉を防ぐ。
+         *
+         * 【更新方式】
+         * afterDrawing は moveTo()/fit() のアニメーション中に
+         * 安定して発火しないため、showMinimap() で RAF ループを
+         * 起動し、visible 中は毎フレーム drawMinimap() を呼ぶ。
+         * ─────────────────────────────────────────────────── */
         #minimap {
-            position: absolute;
-            top: 62px;   /* タブバー(52px) + 余白(10px) */
-            right: 12px;
-            z-index: 200;
-            border-radius: 10px;
-            cursor: crosshair;
-            opacity: 0;
-            pointer-events: none;
+            position: absolute; top: 62px; right: 12px; z-index: 200;
+            border-radius: 10px; cursor: crosshair;
+            opacity: 0; pointer-events: none;
             box-shadow: 0 4px 18px rgba(0,0,0,0.45);
             transition: opacity 0.22s ease;
         }
-        #minimap.visible {
-            opacity: 1;
-            pointer-events: all;
-        }
+        #minimap.visible { opacity: 1; pointer-events: all; }
 
-        /* ─── 編集パネル（ボトムシート）───────────────────────────
-         * visibility + opacity + pointer-events の 3 点セットで
+        /* ── 編集パネル（ボトムシート）──────────────────────────
+         * visibility + opacity + pointer-events の三点セットで
          * 非表示時はレンダリング・インタラクションを完全に無効化。
-         * visibility に transition delay を付けて非表示アニメーション後に隠す。
-         * ─────────────────────────────────────────────────────── */
+         * visibility の transition delay でアニメーション完了後に隠す。
+         * ─────────────────────────────────────────────────── */
         #edit-panel {
             position: absolute; bottom: 34px; left: 0; right: 0;
             background: white; padding: 16px;
-            border-top: 3px solid #34495e;
-            border-radius: 20px 20px 0 0;
+            border-top: 3px solid #34495e; border-radius: 20px 20px 0 0;
             box-shadow: 0 -8px 24px rgba(0,0,0,0.12);
             z-index: 500;
             visibility: hidden; opacity: 0;
-            transform: translateY(100%);
-            pointer-events: none;
-            transition:
-                transform  0.28s cubic-bezier(0.2, 0.9, 0.3, 1),
-                opacity    0.28s ease,
-                visibility 0s    0.28s;
+            transform: translateY(100%); pointer-events: none;
+            transition: transform .28s cubic-bezier(.2,.9,.3,1), opacity .28s ease, visibility 0s .28s;
         }
         #edit-panel.open {
             visibility: visible; opacity: 1;
-            transform: translateY(0);
-            pointer-events: all;
-            transition:
-                transform  0.28s cubic-bezier(0.2, 0.9, 0.3, 1),
-                opacity    0.28s ease,
-                visibility 0s    0s;
+            transform: translateY(0); pointer-events: all;
+            transition: transform .28s cubic-bezier(.2,.9,.3,1), opacity .28s ease, visibility 0s 0s;
         }
-        #edit-panel .panel-label {
-            font-size: 10px; font-weight: 700;
-            letter-spacing: 0.12em; color: #aaa;
-            text-transform: uppercase; margin-bottom: 10px;
+        .panel-label {
+            font-size: 10px; font-weight: 700; letter-spacing: .12em;
+            color: #aaa; text-transform: uppercase; margin-bottom: 10px;
         }
-        #edit-panel textarea {
+
+        /* テキスト/選択肢ノード用 */
+        #text-section textarea {
             width: 100%; height: 88px; padding: 10px 12px;
             font-size: 15px; line-height: 1.6; font-family: inherit;
             border: 1.5px solid #dde1e7; border-radius: 8px;
             resize: vertical; outline: none;
         }
-        #edit-panel textarea:focus { border-color: #3498db; }
-
+        #text-section textarea:focus { border-color: #3498db; }
         #choice-config {
             margin-top: 10px; font-size: 14px; color: #555;
             display: none; align-items: center; gap: 8px;
         }
-        #choice-config select {
-            padding: 4px 10px; border: 1px solid #dde;
-            border-radius: 6px; font-size: 14px;
+        #choice-config select { padding: 4px 10px; border: 1px solid #dde; border-radius: 6px; font-size: 14px; }
+
+        /* 立ち絵ノード用 */
+        #sprite-section { display: flex; flex-direction: column; gap: 9px; }
+        .sprite-row { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+        .sprite-row label { width: 72px; flex-shrink: 0; color: #666; font-weight: 500; }
+        .sprite-row input[type="text"],
+        .sprite-row select {
+            flex: 1; padding: 6px 10px;
+            border: 1.5px solid #dde1e7; border-radius: 6px;
+            font-size: 14px; font-family: inherit; outline: none;
         }
+        .sprite-row input[type="text"]:focus,
+        .sprite-row select:focus { border-color: #8e44ad; }
+
         #btn-close-panel {
-            width: 100%; margin-top: 10px; padding: 10px;
+            width: 100%; margin-top: 12px; padding: 10px;
             background: #ecf0f1; color: #555; border-radius: 8px;
             border: none; cursor: pointer; font-size: 14px; font-weight: 600;
         }
         #btn-close-panel:hover { background: #dfe4e6; }
 
-        /* ─── コンテキストメニュー ─────────────────────────────── */
+        /* ── コンテキストメニュー ───────────────────────────── */
         #ctx-menu {
             display: none; position: absolute; z-index: 2000;
             background: white; border-radius: 12px;
@@ -157,29 +142,29 @@
         .ctx-item + .ctx-item { border-top: 1px solid #f0f0f0; }
         .ctx-item.danger { color: #e74c3c; }
 
-        /* ─── ステータスバー ─────────────────────────────────── */
+        /* ── ステータスバー ─────────────────────────────────── */
         #status-bar {
             position: absolute; bottom: 0; left: 0; right: 0; height: 34px;
-            background: rgba(18, 28, 38, 0.93);
-            backdrop-filter: blur(4px);
+            background: rgba(18,28,38,.93); backdrop-filter: blur(4px);
             display: flex; align-items: center;
-            padding: 0 14px; gap: 10px;
-            font-size: 11px; color: #ccc; z-index: 400;
+            padding: 0 14px; gap: 10px; font-size: 11px; color: #ccc; z-index: 400;
         }
-        .st-sep  { opacity: 0.2; }
-        .st-hint { margin-left: auto; opacity: 0.4; font-size: 10px; }
+        .st-sep  { opacity: .2; }
+        .st-hint { margin-left: auto; opacity: .4; font-size: 10px; }
     </style>
 </head>
 <body>
 
-<!-- ─── タブバー ─────────────────────────────────────────────── -->
+<!-- ── タブバー ─────────────────────────────────────────── -->
 <div class="tab-bar">
     <button class="btn" style="background:#2980b9" onclick="App.createNode('text')">＋ テキスト</button>
     <button class="btn" style="background:#c0392b" onclick="App.createNode('choice')">＋ 選択肢</button>
+    <button class="btn" style="background:#7d3c98" onclick="App.createNode('sprite')">＋ 立ち絵</button>
     <div class="tab-sep"></div>
     <button class="btn" style="background:#27ae60" onclick="App.exportJson()">💾 保存</button>
     <button class="btn" style="background:#7f8c8d" onclick="document.getElementById('file-input').click()">📂 読込</button>
     <button class="btn" style="background:#8e44ad" onclick="App.exportImage()">🖼 画像</button>
+    <button class="btn" style="background:#1a5276" onclick="App.exportDialogic()">📤 Dialogic出力</button>
     <div class="tab-sep"></div>
     <button class="btn" style="background:#16a085" onclick="App.fitView()">🎯 全体表示</button>
     <div class="tab-sep"></div>
@@ -191,110 +176,156 @@
 <canvas id="minimap" width="200" height="130" title="ミニマップ — タップで移動"></canvas>
 <div id="network"></div>
 
-<!-- ─── 編集パネル ───────────────────────────────────────────── -->
+<!-- ── 編集パネル ────────────────────────────────────────── -->
 <div id="edit-panel">
     <div class="panel-label" id="panel-label">NODE SETTINGS</div>
-    <textarea id="panel-text" oninput="App.updateNodeText()" placeholder="本文を入力..."></textarea>
-    <div id="choice-config">
-        分岐数: <select id="choice-num" onchange="App.syncChoices()"></select>
+
+    <!-- TEXT / CHOICE ノード -->
+    <div id="text-section">
+        <textarea id="panel-text" oninput="App.updateNodeText()" placeholder="本文を入力..."></textarea>
+        <div id="choice-config">
+            分岐数: <select id="choice-num" onchange="App.syncChoices()"></select>
+        </div>
     </div>
+
+    <!-- SPRITE ノード -->
+    <div id="sprite-section" style="display:none">
+        <div class="sprite-row">
+            <label>キャラ名</label>
+            <input type="text" id="sprite-name" oninput="App.updateSpriteData()" placeholder="キャラクター名">
+        </div>
+        <div class="sprite-row">
+            <label>立ち位置</label>
+            <select id="sprite-pos" onchange="App.updateSpriteData()">
+                <option value="left">左</option>
+                <option value="right">右</option>
+            </select>
+        </div>
+        <div class="sprite-row">
+            <label>表情</label>
+            <select id="sprite-expr" onchange="App.updateSpriteData()">
+                <option value="default">標準</option>
+                <option value="smile">笑顔</option>
+                <option value="confused">困惑</option>
+                <option value="surprised">驚き</option>
+                <option value="shy">恥じらい</option>
+                <option value="angry">怒り</option>
+                <option value="sad">悲しみ</option>
+                <option value="cry">泣き</option>
+                <option value="gag">ギャグ</option>
+            </select>
+        </div>
+        <div class="sprite-row">
+            <label>アクション</label>
+            <select id="sprite-action" onchange="App.updateSpriteData()">
+                <option value="enter">登場</option>
+                <option value="exit">退場</option>
+            </select>
+        </div>
+    </div>
+
     <button id="btn-close-panel" onclick="App.closePanel()">完了</button>
 </div>
 
-<!-- ─── コンテキストメニュー ─────────────────────────────────── -->
+<!-- ── コンテキストメニュー ──────────────────────────────── -->
 <div id="ctx-menu">
     <div class="ctx-item" onclick="App.toggleLock()">🔒 ロック切替</div>
     <div class="ctx-item" onclick="App.copyNode()">📄 コピー</div>
     <div class="ctx-item danger" onclick="App.deleteNode()">🗑 削除</div>
 </div>
 
-<!-- ─── ステータスバー ───────────────────────────────────────── -->
+<!-- ── ステータスバー ──────────────────────────────────── -->
 <div id="status-bar">
     <span id="st-nodes">ノード: 0</span>
     <span class="st-sep">|</span>
     <span id="st-edges">接続: 0</span>
-    <span class="st-hint">クリック: 選択 / 接続　長押し: メニュー　Del: 削除　Ctrl+Z/Y: Undo/Redo</span>
+    <span class="st-hint">クリック: 選択/接続　長押し: メニュー　Del: 削除　Ctrl+Z/Y: Undo/Redo</span>
 </div>
 
 <script>
-// ════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════
 //  定数
-// ════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════
 const CFG = Object.freeze({
-    // ノード描画
-    nodeW:  188,
-    titleH: 33,
-    lineH:  17,
-    pad:    11,
-
-    // ミニマップ
+    nodeW:         188,
+    titleH:        33,
+    lineH:         17,
+    pad:           11,
     miniW:         200,
     miniH:         130,
-    miniHideDelay: 1000,  // スクロール停止後に隠すまでの ms
-
-    // カメラアニメーション時間 (ms)
-    animFit:  400,
-    animMove: 320,
-
-    // スクロール可能領域 (±boundX / ±boundY)
-    boundX: 4000,
-    boundY: 3000,
-
-    // 履歴
-    maxHistory: 50,
-
-    // インポート検証
-    maxFileBytes: 2 * 1024 * 1024,
-    maxNodes:     500,
-    maxEdges:     2000,
-    maxStrLen:    5000,
+    miniHideDelay: 1000,   // カメラ停止後にミニマップを隠すまでの ms
+    animFit:       400,    // fitView のアニメーション時間 ms
+    animMove:      320,    // moveTo のアニメーション時間 ms
+    boundX:        4000,
+    boundY:        3000,
+    maxHistory:    50,
+    maxFileBytes:  2 * 1024 * 1024,
+    maxNodes:      500,
+    maxEdges:      2000,
+    maxStrLen:     5000,
 });
 
 const NODE_COLORS = Object.freeze({
     text:   '#2980b9',
     choice: '#c0392b',
     option: '#e67e22',
+    sprite: '#7d3c98',
     locked: '#95a5a6',
 });
-
 const NODE_LABELS = Object.freeze({
     text:   'TEXT',
     choice: 'CHOICE',
     option: 'OPTION',
+    sprite: 'SPRITE',
 });
+const ALLOWED_TYPES     = new Set(['text', 'choice', 'option', 'sprite']);
+const VALID_EXPRESSIONS = new Set(['default','smile','confused','surprised','shy','angry','sad','cry','gag']);
+const EXPR_JA = { default:'標準', smile:'笑顔', confused:'困惑', surprised:'驚き',
+                  shy:'恥じらい', angry:'怒り', sad:'悲しみ', cry:'泣き', gag:'ギャグ' };
 
-const ALLOWED_TYPES = new Set(['text', 'choice', 'option']);
+// ════════════════════════════════════════════════════════
+//  立ち絵ノードの表示ラベルを生成する
+// ════════════════════════════════════════════════════════
+function buildSpriteLabel({ charName, spritePos, expression, spriteAction }) {
+    const name   = charName    || '(名前未設定)';
+    const pos    = spritePos   === 'right' ? '右' : '左';
+    const expr   = EXPR_JA[expression]    ?? '標準';
+    const action = spriteAction === 'exit' ? '退場' : '登場';
+    return `${name}\n${pos} | ${expr}\n${action}`;
+}
 
-// ════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════
 //  描画ユーティリティ
-// ════════════════════════════════════════════════════════════
-
-/** 角丸矩形パスを ctx に積む */
+// ════════════════════════════════════════════════════════
 function roundRectPath(ctx, x, y, w, h, r) {
     ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y);  ctx.arcTo(x + w, y,     x + w, y + r,     r);
-    ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-    ctx.lineTo(x + r, y + h);  ctx.arcTo(x,     y + h, x,       y + h - r, r);
-    ctx.lineTo(x, y + r);      ctx.arcTo(x,     y,     x + r,   y,         r);
+    ctx.moveTo(x + r, y);        ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y,     x + w, y + r,     r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x,     y + h, x,       y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x,     y,     x + r,   y,         r);
     ctx.closePath();
 }
 
 /**
  * vis-network ctxRenderer ファクトリ。
- * nodesDS を参照クロージャとして持つため、DataSet 生成後に呼ぶ。
- *
- * x, y はネットワーク座標系（canvas の transform が適用済みの ctx で描画する）。
- * nodeDimensions もネットワーク座標系で返し、vis-network の
- * バウンディングボックス計算（= タップ判定）と一致させる。
+ * shape:'custom' + ctxRenderer を使い描画座標と
+ * バウンディングボックス（タップ判定）を完全に一致させる。
  */
 function createCtxRenderer(nodesDS) {
-    return function ctxRenderer({ ctx, id, x, y, state: { selected } }) {
+    return function({ ctx, id, x, y, state: { selected } }) {
         const nd = nodesDS.get(id);
         if (!nd) return { drawNode() {}, nodeDimensions: { width: CFG.nodeW, height: 80 } };
 
-        const { type = 'text', fixed = false, rawText = '', label = '' } = nd;
-        const lines  = (rawText || label).split('\n').slice(0, 4);
+        const { type = 'text', fixed = false } = nd;
+        // sprite は buildSpriteLabel 由来の label、その他は rawText → label の順にフォールバック
+        const displayText = type === 'sprite'
+            ? (nd.label || '')
+            : (nd.rawText || nd.label || '');
+        const lines  = displayText.split('\n').slice(0, 4);
         const bodyH  = Math.max(50, lines.length * CFG.lineH + CFG.pad * 2);
         const H      = CFG.titleH + bodyH;
         const W      = CFG.nodeW;
@@ -306,54 +337,40 @@ function createCtxRenderer(nodesDS) {
             drawNode() {
                 // 影 + 背景
                 ctx.save();
-                ctx.shadowColor = 'rgba(0,0,0,0.12)';
-                ctx.shadowBlur  = selected ? 14 : 8;
-                ctx.shadowOffsetY = 3;
-                ctx.fillStyle = selected ? '#eef6ff' : '#fff';
-                roundRectPath(ctx, lx, ty, W, H, 8);
-                ctx.fill();
+                ctx.shadowColor = 'rgba(0,0,0,0.12)'; ctx.shadowBlur = selected ? 14 : 8; ctx.shadowOffsetY = 3;
+                ctx.fillStyle = selected ? '#f3eef9' : '#fff';
+                roundRectPath(ctx, lx, ty, W, H, 8); ctx.fill();
                 ctx.restore();
 
                 // 外枠
                 ctx.strokeStyle = selected ? color : color + 'aa';
                 ctx.lineWidth   = selected ? 2.5 : 1.5;
-                roundRectPath(ctx, lx, ty, W, H, 8);
-                ctx.stroke();
+                roundRectPath(ctx, lx, ty, W, H, 8); ctx.stroke();
 
-                // タイトルバー（角丸でクリップして枠外に出ないようにする）
+                // タイトルバー（角丸クリップで枠外に出ないようにする）
                 ctx.save();
-                roundRectPath(ctx, lx, ty, W, H, 8);
-                ctx.clip();
-                ctx.fillStyle = color;
-                ctx.fillRect(lx, ty, W, CFG.titleH);
+                roundRectPath(ctx, lx, ty, W, H, 8); ctx.clip();
+                ctx.fillStyle = color; ctx.fillRect(lx, ty, W, CFG.titleH);
                 ctx.restore();
 
                 // タイトルテキスト
                 ctx.save();
-                ctx.fillStyle    = 'white';
-                ctx.font         = 'bold 11px -apple-system,sans-serif';
-                ctx.textBaseline = 'middle';
-                ctx.textAlign    = 'left';
+                ctx.fillStyle = 'white'; ctx.font = 'bold 11px -apple-system,sans-serif';
+                ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
                 ctx.fillText(NODE_LABELS[type] || 'NODE', lx + 10, ty + CFG.titleH / 2);
-                if (fixed) {
-                    ctx.textAlign = 'right';
-                    ctx.fillText('[locked]', lx + W - 8, ty + CFG.titleH / 2);
-                }
+                if (fixed) { ctx.textAlign = 'right'; ctx.fillText('[locked]', lx + W - 8, ty + CFG.titleH / 2); }
                 ctx.restore();
 
                 // 本文テキスト
                 ctx.save();
-                ctx.fillStyle    = '#444';
-                ctx.font         = '12px -apple-system,sans-serif';
-                ctx.textAlign    = 'left';
-                ctx.textBaseline = 'top';
+                ctx.fillStyle = '#444'; ctx.font = '12px -apple-system,sans-serif';
+                ctx.textAlign = 'left'; ctx.textBaseline = 'top';
                 lines.forEach((line, i) => {
                     if (line.length > 22) line = line.slice(0, 21) + '...';
                     ctx.fillText(line || ' ', lx + CFG.pad, ty + CFG.titleH + CFG.pad + i * CFG.lineH);
                 });
                 ctx.restore();
             },
-            // バウンディングボックス（タップ判定）と描画を一致させる
             nodeDimensions: { width: W, height: H },
         };
     };
@@ -368,50 +385,37 @@ function attachRenderer(data, renderer) {
     return { shape: 'custom', ctxRenderer: renderer, ...rest };
 }
 
-// ════════════════════════════════════════════════════════════
-//  入力検証 & サニタイズ
-//  (GitHub Pages 一般公開のため破損 / 不正データを排除する)
-// ════════════════════════════════════════════════════════════
-
+// ════════════════════════════════════════════════════════
+//  入力検証 & サニタイズ (GitHub Pages 一般公開向け)
+// ════════════════════════════════════════════════════════
 function sanitizeStr(val, maxLen) {
     const s = typeof val === 'string' ? val : String(val ?? '');
-    // 表示に使わない制御文字を除去してから長さを制限
     return s.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, maxLen);
 }
-
 function clampNum(v, lo, hi, fallback) {
-    const n = Number(v);
-    return isFinite(n) ? Math.max(lo, Math.min(hi, n)) : fallback;
+    const n = Number(v); return isFinite(n) ? Math.max(lo, Math.min(hi, n)) : fallback;
 }
 
 function validateImport(raw) {
     if (raw.length > CFG.maxFileBytes)
         throw new Error('ファイルサイズが上限 (2 MB) を超えています');
-
     let data;
-    try   { data = JSON.parse(raw); }
-    catch { throw new Error('JSON パースに失敗しました（ファイルが破損している可能性があります）'); }
+    try { data = JSON.parse(raw); } catch { throw new Error('JSON パースに失敗しました'); }
 
     if (typeof data !== 'object' || data === null || Array.isArray(data))
-        throw new Error('不正なフォーマット: トップレベルはオブジェクトが必要です');
-    if (!Array.isArray(data.nodes))
-        throw new Error('"nodes" が配列ではありません');
+        throw new Error('トップレベルはオブジェクトが必要です');
+    if (!Array.isArray(data.nodes)) throw new Error('"nodes" が配列ではありません');
     if (data.nodes.length > CFG.maxNodes)
         throw new Error(`ノード数が上限 (${CFG.maxNodes}) を超えています`);
 
     const knownIds = new Set();
-
     const nodes = data.nodes.map((n, i) => {
-        if (typeof n !== 'object' || n === null)
-            throw new Error(`nodes[${i}]: 不正な値です`);
-
+        if (typeof n !== 'object' || n === null) throw new Error(`nodes[${i}]: 不正な値`);
         const id = sanitizeStr(String(n.id ?? ''), 150);
-        if (!id)               throw new Error(`nodes[${i}]: id が空です`);
-        if (knownIds.has(id))  throw new Error(`nodes[${i}]: id "${id}" が重複しています`);
+        if (!id)             throw new Error(`nodes[${i}]: id が空です`);
+        if (knownIds.has(id)) throw new Error(`nodes[${i}]: id "${id}" が重複しています`);
         knownIds.add(id);
-
-        if (!ALLOWED_TYPES.has(n.type))
-            throw new Error(`nodes[${i}]: 不正な type "${n.type}"`);
+        if (!ALLOWED_TYPES.has(n.type)) throw new Error(`nodes[${i}]: 不正な type "${n.type}"`);
 
         const out = {
             id,
@@ -422,12 +426,10 @@ function validateImport(raw) {
             y:       clampNum(n.y, -CFG.boundY, CFG.boundY, 0),
             fixed:   Boolean(n.fixed),
         };
-
         if (n.type === 'choice') {
             out.childCount = clampNum(n.childCount, 1, 9, 2);
             if (Array.isArray(n.childIds))
-                out.childIds = n.childIds
-                    .map(s => sanitizeStr(String(s), 150)).filter(Boolean).slice(0, 9);
+                out.childIds = n.childIds.map(s => sanitizeStr(String(s), 150)).filter(Boolean).slice(0, 9);
             if (n.childOffsets && typeof n.childOffsets === 'object' && !Array.isArray(n.childOffsets))
                 out.childOffsets = Object.fromEntries(
                     Object.entries(n.childOffsets)
@@ -438,89 +440,112 @@ function validateImport(raw) {
                         }])
                 );
         }
+        if (n.type === 'sprite') {
+            out.charName     = sanitizeStr(n.charName, 100);
+            out.spritePos    = n.spritePos === 'right' ? 'right' : 'left';
+            out.expression   = VALID_EXPRESSIONS.has(n.expression) ? n.expression : 'default';
+            out.spriteAction = n.spriteAction === 'exit' ? 'exit' : 'enter';
+            // label を再生成してインポートデータの整合性を保証
+            out.label = buildSpriteLabel(out);
+        }
         return out;
     });
 
-    if (!Array.isArray(data.edges))
-        throw new Error('"edges" が配列ではありません');
+    if (!Array.isArray(data.edges)) throw new Error('"edges" が配列ではありません');
     if (data.edges.length > CFG.maxEdges)
         throw new Error(`エッジ数が上限 (${CFG.maxEdges}) を超えています`);
 
     const edges = data.edges.map((e, i) => {
-        if (typeof e !== 'object' || e === null)
-            throw new Error(`edges[${i}]: 不正な値です`);
+        if (typeof e !== 'object' || e === null) throw new Error(`edges[${i}]: 不正な値`);
         const from = sanitizeStr(String(e.from ?? ''), 150);
         const to   = sanitizeStr(String(e.to   ?? ''), 150);
-        if (!knownIds.has(from)) throw new Error(`edges[${i}]: 存在しない from ノード "${from}"`);
-        if (!knownIds.has(to))   throw new Error(`edges[${i}]: 存在しない to ノード "${to}"`);
-        if (from === to)         throw new Error(`edges[${i}]: 自己ループは許可されていません`);
+        if (!knownIds.has(from)) throw new Error(`edges[${i}]: 存在しない from "${from}"`);
+        if (!knownIds.has(to))   throw new Error(`edges[${i}]: 存在しない to "${to}"`);
+        if (from === to)         throw new Error(`edges[${i}]: 自己ループは不可`);
         return { from, to };
     });
 
     return { nodes, edges };
 }
 
-// ════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════
 //  アプリ本体
-// ════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════
 const App = (() => {
 
-    // ─── データ ──────────────────────────────────────────────
+    // ── データ ────────────────────────────────────────
     const nodesDS = new vis.DataSet([]);
     const edgesDS = new vis.DataSet([]);
     let   network = null;
 
-    // ─── UI 状態 ─────────────────────────────────────────────
-    let pendingFrom = null;   // 接続元として選択中のノード ID
+    // ── UI 状態 ───────────────────────────────────────
+    let pendingFrom = null;   // 接続操作の待機中ノード ID
     let ctxTargetId = null;   // コンテキストメニューのターゲット
 
-    // ─── 履歴 ────────────────────────────────────────────────
-    let undoStack = [];
-    let redoStack = [];
+    // ── 履歴 ──────────────────────────────────────────
+    let undoStack = [], redoStack = [];
 
-    // ─── ミニマップ ──────────────────────────────────────────
+    // ── ミニマップ ─────────────────────────────────────
     const minimapEl  = document.getElementById('minimap');
     const minimapCtx = minimapEl.getContext('2d');
-    let   minimapTimer = null;
+    let   minimapTimer  = null;
+    let   minimapRafId  = null;   // RAF ループ管理
 
-    // ─── ctxRenderer（DataSet 参照が必要なため init 前に生成） ─
+    // ── ctxRenderer ───────────────────────────────────
     let renderer = null;
 
-    // ─── 選択肢数セレクト初期化 ──────────────────────────────
+    // ── 選択肢数セレクト初期化 ─────────────────────────
     const choiceNumSel = document.getElementById('choice-num');
     for (let i = 1; i <= 9; i++) choiceNumSel.add(new Option(i, i));
 
-    // ════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════
     //  ミニマップ
     //
-    //  【表示ルール】
-    //   - ドラッグ / ズーム中: showMinimap() で即座に表示
-    //   - ミニマップクリック / fitView() 実行時: showMinimap() で表示
-    //   - 操作終了 → miniHideDelay ms 後に自動非表示 (scheduleMinimap)
-    //   - ノード以外をタップ → 即座に非表示 (hideMinimap)
-    //
-    //  【更新ルール】
-    //   vis-network の afterDrawing イベントで毎フレーム再描画。
-    //   これにより moveTo() / fit() のアニメーション中も
-    //   ビューポート枠がリアルタイムで追従する。
-    // ════════════════════════════════════════════════════════
+    //  表示/非表示を RAF ループで管理する。
+    //  visible クラスが付いている間は毎フレーム drawMinimap() を
+    //  呼び続けることで、moveTo()/fit() のアニメーション中も
+    //  ビューポート枠をリアルタイムで追従させる。
+    // ════════════════════════════════════════════════
+
+    function startMinimapLoop() {
+        if (minimapRafId) return;  // 既にループ中
+        const tick = () => {
+            if (!minimapEl.classList.contains('visible')) {
+                minimapRafId = null;
+                return;
+            }
+            if (network) drawMinimap();
+            minimapRafId = requestAnimationFrame(tick);
+        };
+        minimapRafId = requestAnimationFrame(tick);
+    }
 
     function showMinimap() {
         clearTimeout(minimapTimer);
         minimapEl.classList.add('visible');
+        startMinimapLoop();
     }
 
     function hideMinimap() {
         minimapEl.classList.remove('visible');
+        // RAF ループは次の tick で自動停止
     }
 
-    /** 一定時間後に自動非表示を予約する */
+    /** 操作終了後に miniHideDelay ms でミニマップを自動非表示 */
     function scheduleMinimap() {
         clearTimeout(minimapTimer);
         minimapTimer = setTimeout(hideMinimap, CFG.miniHideDelay);
     }
 
-    /** ミニマップ Canvas を再描画する（表示中に毎フレーム呼ばれる）*/
+    /**
+     * アニメーション付き移動（fitView / minimap クリック）の場合、
+     * アニメーション時間が終わってから miniHideDelay ms 後に隠す。
+     */
+    function scheduleMinimapAfter(extraMs) {
+        clearTimeout(minimapTimer);
+        minimapTimer = setTimeout(hideMinimap, extraMs + CFG.miniHideDelay);
+    }
+
     function drawMinimap() {
         const { miniW: W, miniH: H, boundX: BX, boundY: BY } = CFG;
         const toMX = nx => (nx + BX) / (BX * 2) * W;
@@ -530,20 +555,16 @@ const App = (() => {
 
         // 背景
         minimapCtx.fillStyle = 'rgba(14,24,34,0.92)';
-        roundRectPath(minimapCtx, 0, 0, W, H, 10);
-        minimapCtx.fill();
+        roundRectPath(minimapCtx, 0, 0, W, H, 10); minimapCtx.fill();
 
         // 枠
-        minimapCtx.strokeStyle = 'rgba(255,255,255,0.10)';
-        minimapCtx.lineWidth   = 1;
-        roundRectPath(minimapCtx, 0.5, 0.5, W - 1, H - 1, 10);
-        minimapCtx.stroke();
+        minimapCtx.strokeStyle = 'rgba(255,255,255,0.10)'; minimapCtx.lineWidth = 1;
+        roundRectPath(minimapCtx, .5, .5, W - 1, H - 1, 10); minimapCtx.stroke();
 
         const positions = network.getPositions();
 
         // エッジ
-        minimapCtx.strokeStyle = 'rgba(180,196,212,0.20)';
-        minimapCtx.lineWidth   = 0.7;
+        minimapCtx.strokeStyle = 'rgba(180,196,212,0.20)'; minimapCtx.lineWidth = 0.7;
         edgesDS.get().forEach(({ from, to }) => {
             const fp = positions[from], tp = positions[to];
             if (!fp || !tp) return;
@@ -572,35 +593,44 @@ const App = (() => {
         const rw = Math.min(W - rx - 1, vw / (BX * 2) * W);
         const rh = Math.min(H - ry - 1, vh / (BY * 2) * H);
 
-        minimapCtx.strokeStyle = 'rgba(255,255,255,0.65)';
-        minimapCtx.lineWidth   = 1.5;
-        minimapCtx.strokeRect(rx, ry, rw, rh);
+        minimapCtx.strokeStyle = 'rgba(255,255,255,0.65)'; minimapCtx.lineWidth = 1.5;
+        minimapCtx.strokeRect(rx, ry, Math.max(1, rw), Math.max(1, rh));
 
         // ラベル
-        minimapCtx.fillStyle    = 'rgba(255,255,255,0.25)';
-        minimapCtx.font         = 'bold 8px sans-serif';
-        minimapCtx.textAlign    = 'right';
-        minimapCtx.textBaseline = 'bottom';
+        minimapCtx.fillStyle = 'rgba(255,255,255,0.25)';
+        minimapCtx.font = 'bold 8px sans-serif';
+        minimapCtx.textAlign = 'right'; minimapCtx.textBaseline = 'bottom';
         minimapCtx.fillText('MINIMAP', W - 6, H - 5);
     }
 
-    // ════════════════════════════════════════════════════════
-    //  スクロール制限
-    // ════════════════════════════════════════════════════════
+    // ミニマップをタップ → そこへカメラをジャンプ
+    minimapEl.addEventListener('click', e => {
+        if (!network) return;
+        const rect = minimapEl.getBoundingClientRect();
+        const mx   = (e.clientX - rect.left) / CFG.miniW;
+        const my   = (e.clientY - rect.top)  / CFG.miniH;
+        showMinimap();
+        network.moveTo({
+            position:  { x: mx * CFG.boundX * 2 - CFG.boundX, y: my * CFG.boundY * 2 - CFG.boundY },
+            animation: { duration: CFG.animMove, easingFunction: 'easeInOutQuad' },
+        });
+        scheduleMinimapAfter(CFG.animMove);
+    });
 
+    // ════════════════════════════════════════════════
+    //  スクロール制限
+    // ════════════════════════════════════════════════
     function enforceBounds() {
         const { x, y } = network.getViewPosition();
         const cx = Math.max(-CFG.boundX, Math.min(CFG.boundX, x));
         const cy = Math.max(-CFG.boundY, Math.min(CFG.boundY, y));
         if (cx !== x || cy !== y)
-            network.moveTo({ position: { x: cx, y: cy },
-                             animation: { duration: 180, easingFunction: 'easeOutQuad' } });
+            network.moveTo({ position: { x: cx, y: cy }, animation: { duration: 180, easingFunction: 'easeOutQuad' } });
     }
 
-    // ════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════
     //  Undo / Redo
-    // ════════════════════════════════════════════════════════
-
+    // ════════════════════════════════════════════════
     function snapshot() {
         const pos = network?.getPositions() ?? {};
         return JSON.stringify({
@@ -620,13 +650,10 @@ const App = (() => {
 
     function applySnapshot(json) {
         const { nodes: ns, edges: es } = JSON.parse(json);
-        nodesDS.clear();
-        edgesDS.clear();
+        nodesDS.clear(); edgesDS.clear();
         edgesDS.add(es ?? []);
         nodesDS.add((ns ?? []).map(n => attachRenderer(n, renderer)));
-        pendingFrom = null;
-        closePanel();
-        syncStatus();
+        pendingFrom = null; closePanel(); syncStatus();
     }
 
     function syncHistoryButtons() {
@@ -636,48 +663,43 @@ const App = (() => {
 
     function undo() {
         if (!undoStack.length) return;
-        redoStack.push(snapshot());
-        applySnapshot(undoStack.pop());
-        syncHistoryButtons();
+        redoStack.push(snapshot()); applySnapshot(undoStack.pop()); syncHistoryButtons();
     }
-
     function redo() {
         if (!redoStack.length) return;
-        undoStack.push(snapshot());
-        applySnapshot(redoStack.pop());
-        syncHistoryButtons();
+        undoStack.push(snapshot()); applySnapshot(redoStack.pop()); syncHistoryButtons();
     }
 
-    // ════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════
     //  ノード操作
-    // ════════════════════════════════════════════════════════
-
-    function makeNode(data) {
-        return attachRenderer(data, renderer);
-    }
+    // ════════════════════════════════════════════════
+    function makeNode(data) { return attachRenderer(data, renderer); }
 
     function createNode(type) {
         saveState();
         const id     = `${type}_${Date.now()}`;
         const center = network.getViewPosition();
-        nodesDS.add(makeNode({
-            id, type, rawText: '', label: '...',
-            x: center.x, y: center.y, fixed: false,
-        }));
+        const base   = { id, type, rawText: '', label: '...', x: center.x, y: center.y, fixed: false };
+
+        if (type === 'sprite') {
+            const defaults = { charName: '', spritePos: 'left', expression: 'default', spriteAction: 'enter' };
+            Object.assign(base, defaults);
+            base.label = buildSpriteLabel(defaults);
+        }
+
+        nodesDS.add(makeNode(base));
         if (type === 'choice') setTimeout(() => buildChoiceChildren(id, 2), 50);
-        pendingFrom = null;
+        pendingFrom = id;
         openPanel(nodesDS.get(id));
     }
 
     /**
      * CHOICE の子 OPTION を再構築する。
-     * 既存の子を削除してから count 個生成し直し、
-     * childIds / childOffsets を親ノードに記録する。
+     * 既存の子を削除してから count 個生成し直す。
      */
     function buildChoiceChildren(parentId, count) {
-        const parent = nodesDS.get(parentId);
-        if (!parent) return;
-        const pos = network.getPositions([parentId])[parentId] ?? { x: 0, y: 0 };
+        const parent = nodesDS.get(parentId); if (!parent) return;
+        const pos    = network.getPositions([parentId])[parentId] ?? { x: 0, y: 0 };
 
         const oldIds = parent.childIds ?? [];
         if (oldIds.length) {
@@ -688,23 +710,17 @@ const App = (() => {
         const childIds = [], offsets = {};
         for (let i = 1; i <= count; i++) {
             const cid = `opt_${parentId}_${i}`;
-            const ox  = 240;
-            const oy  = (i - (count + 1) / 2) * 110;
-            nodesDS.add(makeNode({
-                id: cid, type: 'option',
-                rawText: `選択肢${i}`, label: `選択肢${i}`,
-                x: pos.x + ox, y: pos.y + oy, fixed: false,
-            }));
+            const ox  = 240, oy = (i - (count + 1) / 2) * 110;
+            nodesDS.add(makeNode({ id: cid, type: 'option', rawText: `選択肢${i}`, label: `選択肢${i}`,
+                x: pos.x + ox, y: pos.y + oy, fixed: false }));
             edgesDS.add({ from: parentId, to: cid });
-            childIds.push(cid);
-            offsets[cid] = { x: ox, y: oy };
+            childIds.push(cid); offsets[cid] = { x: ox, y: oy };
         }
         nodesDS.update({ id: parentId, childIds, childOffsets: offsets, childCount: count });
     }
 
     function removeNode(id) {
-        const n = nodesDS.get(id);
-        if (!n) return;
+        const n = nodesDS.get(id); if (!n) return;
         if (n.type === 'choice' && n.childIds?.length) {
             edgesDS.remove(edgesDS.get({ filter: e => n.childIds.includes(e.to) }).map(e => e.id));
             nodesDS.remove(n.childIds);
@@ -714,73 +730,70 @@ const App = (() => {
     }
 
     /**
-     * 2 ノード間のエッジを追加/解除する。
-     *
-     * 【方向ルール】エッジは常に左から右（x 座標が小さい → 大きい）へ。
+     * エッジの追加 / 解除。
+     * 方向は常に左から右（x 座標小 → 大）に統一する。
      * どちらのノードを先に選んでも同じエッジが対象になる。
      */
     function toggleEdge(aId, bId) {
         const pos = network.getPositions([aId, bId]);
-        const ax  = pos[aId]?.x ?? 0;
-        const bx  = pos[bId]?.x ?? 1;
-        const [fromId, toId] = ax <= bx ? [aId, bId] : [bId, aId];
-
+        const [fromId, toId] = (pos[aId]?.x ?? 0) <= (pos[bId]?.x ?? 1) ? [aId, bId] : [bId, aId];
         const existing = edgesDS.get({ filter: e => e.from === fromId && e.to === toId });
         if (existing.length) edgesDS.remove(existing[0].id);
         else                 edgesDS.add({ from: fromId, to: toId });
     }
 
-    // ════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════
     //  編集パネル
-    // ════════════════════════════════════════════════════════
-
+    // ════════════════════════════════════════════════
     function openPanel(node) {
-        document.getElementById('panel-label').textContent =
-            (NODE_LABELS[node.type] ?? 'NODE') + ' SETTINGS';
-        document.getElementById('panel-text').value = node.rawText ?? '';
-        const cc = document.getElementById('choice-config');
-        cc.style.display = node.type === 'choice' ? 'flex' : 'none';
-        if (node.type === 'choice') choiceNumSel.value = node.childCount ?? 2;
+        const isSprite = node.type === 'sprite';
+        document.getElementById('panel-label').textContent = (NODE_LABELS[node.type] ?? 'NODE') + ' SETTINGS';
+        document.getElementById('text-section').style.display   = isSprite ? 'none' : 'block';
+        document.getElementById('sprite-section').style.display = isSprite ? 'flex'  : 'none';
+
+        if (isSprite) {
+            document.getElementById('sprite-name').value   = node.charName     ?? '';
+            document.getElementById('sprite-pos').value    = node.spritePos    ?? 'left';
+            document.getElementById('sprite-expr').value   = node.expression   ?? 'default';
+            document.getElementById('sprite-action').value = node.spriteAction ?? 'enter';
+        } else {
+            document.getElementById('panel-text').value = node.rawText ?? '';
+            const cc = document.getElementById('choice-config');
+            cc.style.display = node.type === 'choice' ? 'flex' : 'none';
+            if (node.type === 'choice') choiceNumSel.value = node.childCount ?? 2;
+        }
         document.getElementById('edit-panel').classList.add('open');
-        setTimeout(() => document.getElementById('panel-text').focus(), 300);
+        setTimeout(() => {
+            const target = isSprite
+                ? document.getElementById('sprite-name')
+                : document.getElementById('panel-text');
+            target?.focus();
+        }, 300);
     }
 
-    function closePanel() {
-        document.getElementById('edit-panel').classList.remove('open');
-    }
+    function closePanel() { document.getElementById('edit-panel').classList.remove('open'); }
 
-    // ════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════
     //  ステータスバー
-    // ════════════════════════════════════════════════════════
-
+    // ════════════════════════════════════════════════
     function syncStatus() {
         document.getElementById('st-nodes').textContent = `ノード: ${nodesDS.length}`;
         document.getElementById('st-edges').textContent = `接続: ${edgesDS.length}`;
     }
 
-    // ════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════
     //  コンテキストメニュー
-    // ════════════════════════════════════════════════════════
-
+    // ════════════════════════════════════════════════
     const ctxMenuEl = document.getElementById('ctx-menu');
-
     function showCtxMenu(nodeId, domX, domY) {
         ctxTargetId = nodeId;
-        Object.assign(ctxMenuEl.style, {
-            display: 'flex',
-            left:    `${domX}px`,
-            top:     `${domY}px`,
-        });
+        Object.assign(ctxMenuEl.style, { display: 'flex', left: `${domX}px`, top: `${domY}px` });
     }
+    function hideCtxMenu() { ctxMenuEl.style.display = 'none'; }
 
-    function hideCtxMenu() {
-        ctxMenuEl.style.display = 'none';
-    }
-
-    // ════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════
     //  vis-network 初期化
-    // ════════════════════════════════════════════════════════
-
+    // ════════════════════════════════════════════════
     function init() {
         renderer = createCtxRenderer(nodesDS);
 
@@ -790,27 +803,18 @@ const App = (() => {
             {
                 nodes: { shape: 'custom', ctxRenderer: renderer },
                 edges: {
-                    arrows: { to: { enabled: true, scaleFactor: 0.75 } },
+                    arrows: { to: { enabled: true, scaleFactor: .75 } },
                     color:  { color: '#b0bec5', highlight: '#2980b9', hover: '#78909c' },
-                    smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: 0.4 },
+                    smooth: { type: 'cubicBezier', forceDirection: 'horizontal', roundness: .4 },
                     width: 1.5, hoverWidth: 2,
                 },
                 physics: { enabled: false },
-                // false にしないと複数ノードが同時選択され
-                // 意図しない一括ドラッグが起きる
+                // multiselect: false で複数ノードの意図しない一括ドラッグを防ぐ
                 interaction: { hover: true, multiselect: false, dragView: true, zoomView: true },
             }
         );
 
-        // ── afterDrawing: ミニマップを毎フレーム更新 ──────────────
-        // moveTo() / fit() のアニメーション中も含め、
-        // vis-network が描画するたびにミニマップを再描画することで
-        // ビューポート枠が常に現在位置を正確に反映する。
-        network.on('afterDrawing', () => {
-            if (minimapEl.classList.contains('visible')) drawMinimap();
-        });
-
-        // ── dragging: ミニマップ表示 & CHOICE 子ノード追従 ─────────
+        // ── ドラッグ中: ミニマップ表示 & CHOICE 子追従 ──────────
         network.on('dragging', ({ nodes: nds }) => {
             showMinimap();
             if (!nds.length) return;
@@ -823,10 +827,9 @@ const App = (() => {
             }));
         });
 
-        // ── dragEnd: OPTION オフセット記録 & 後処理 ─────────────────
+        // ── ドラッグ終了: OPTION のオフセット更新 & 後処理 ─────
         network.on('dragEnd', ({ nodes: nds }) => {
-            scheduleMinimap();
-            enforceBounds();
+            scheduleMinimap(); enforceBounds();
             if (!nds.length) return;
             const moved = nodesDS.get(nds[0]);
             if (moved?.type !== 'option') return;
@@ -835,106 +838,160 @@ const App = (() => {
             const parent = nodesDS.get(parentEdge.from);
             if (!parent || parent.type !== 'choice') return;
             const pos = network.getPositions([parent.id, nds[0]]);
-            nodesDS.update({
-                id: parent.id,
-                childOffsets: {
-                    ...(parent.childOffsets ?? {}),
-                    [nds[0]]: {
-                        x: pos[nds[0]].x - pos[parent.id].x,
-                        y: pos[nds[0]].y - pos[parent.id].y,
-                    },
-                },
-            });
+            nodesDS.update({ id: parent.id, childOffsets: {
+                ...(parent.childOffsets ?? {}),
+                [nds[0]]: { x: pos[nds[0]].x - pos[parent.id].x, y: pos[nds[0]].y - pos[parent.id].y },
+            }});
         });
 
-        // ── zoom: ミニマップ表示 & スクロール制限 ────────────────────
-        network.on('zoom', () => {
-            showMinimap();
-            scheduleMinimap();
-            enforceBounds();
-        });
+        // ── ズーム: ミニマップ表示 & 範囲制限 ─────────────────
+        network.on('zoom', () => { showMinimap(); scheduleMinimap(); enforceBounds(); });
 
-        // ── click: 接続操作 ──────────────────────────────────────────
+        // ── クリック: 接続操作 ──────────────────────────────────
         network.on('click', ({ nodes: nds }) => {
-            hideCtxMenu();
-            hideMinimap();   // ノード以外をタップしたら即座に非表示
-
+            hideCtxMenu(); hideMinimap();
             const id = nds[0];
             if (id) {
                 if (pendingFrom && pendingFrom !== id) {
-                    // 別ノードが選択中 → 接続 / 解除
-                    saveState();
-                    toggleEdge(pendingFrom, id);
-                    pendingFrom = null;
-                    closePanel();
+                    saveState(); toggleEdge(pendingFrom, id);
+                    pendingFrom = null; closePanel();
                 } else {
                     pendingFrom = id;
                     const nd = nodesDS.get(id);
                     if (nd && !nd.fixed) openPanel(nd);
                 }
             } else {
-                pendingFrom = null;
-                closePanel();
+                pendingFrom = null; closePanel();
             }
         });
 
-        // ── hold: コンテキストメニュー ───────────────────────────────
+        // ── 長押し: コンテキストメニュー ───────────────────────
         network.on('hold', ({ nodes: nds, pointer }) => {
             if (!nds.length) return;
             showCtxMenu(nds[0], pointer.DOM.x, pointer.DOM.y);
         });
 
-        // ── DataSet 変更 → ステータス更新 ───────────────────────────
         nodesDS.on('*', syncStatus);
         edgesDS.on('*', syncStatus);
         syncStatus();
     }
 
-    // ════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════
     //  ナビゲーション
-    // ════════════════════════════════════════════════════════
-
-    /**
-     * 全ノードが収まるようビューを調整する。
-     * ミニマップを表示し、アニメーション中 afterDrawing で更新、
-     * 完了後 miniHideDelay ms で自動非表示。
-     */
+    // ════════════════════════════════════════════════
     function fitView() {
         showMinimap();
         const anim = { duration: CFG.animFit, easingFunction: 'easeInOutQuad' };
-        if (nodesDS.length) {
-            network.fit({ animation: anim });
-        } else {
-            network.moveTo({ position: { x: 0, y: 0 }, scale: 1, animation: anim });
-        }
-        clearTimeout(minimapTimer);
-        minimapTimer = setTimeout(hideMinimap, CFG.animFit + CFG.miniHideDelay);
+        nodesDS.length
+            ? network.fit({ animation: anim })
+            : network.moveTo({ position: { x: 0, y: 0 }, scale: 1, animation: anim });
+        scheduleMinimapAfter(CFG.animFit);
     }
 
-    // ミニマップクリック → その座標へカメラをジャンプ
-    minimapEl.addEventListener('click', e => {
-        if (!network) return;
-        const rect = minimapEl.getBoundingClientRect();
-        const mx   = (e.clientX - rect.left) / CFG.miniW;
-        const my   = (e.clientY - rect.top)  / CFG.miniH;
-        showMinimap();
-        network.moveTo({
-            position:  { x: mx * CFG.boundX * 2 - CFG.boundX, y: my * CFG.boundY * 2 - CFG.boundY },
-            animation: { duration: CFG.animMove, easingFunction: 'easeInOutQuad' },
+    // ════════════════════════════════════════════════
+    //  Dialogic JSON エクスポート
+    //
+    //  グラフを DAG として左→右に走査し、Dialogic 2.x の
+    //  イベント構造に対応した JSON を生成する。
+    //  Godot 側でこの JSON を読み込む GDScript インポーターが必要。
+    //  (README 参照)
+    // ════════════════════════════════════════════════
+    function exportDialogic() {
+        // 隣接マップを構築
+        const outgoing = new Map(), incoming = new Map();
+        nodesDS.get().forEach(n => { outgoing.set(n.id, []); incoming.set(n.id, []); });
+        edgesDS.get().forEach(e => {
+            outgoing.get(e.from)?.push(e.to);
+            incoming.get(e.to)?.push(e.from);
         });
-        clearTimeout(minimapTimer);
-        minimapTimer = setTimeout(hideMinimap, CFG.animMove + CFG.miniHideDelay);
-    });
 
-    // ════════════════════════════════════════════════════════
-    //  Import / Export
-    // ════════════════════════════════════════════════════════
+        // ルートノード: 入次数 0 かつ option 以外、x 座標順
+        const roots = nodesDS.get()
+            .filter(n => n.type !== 'option' && !(incoming.get(n.id)?.length))
+            .sort((a, b) => (a.x ?? 0) - (b.x ?? 0));
 
+        if (!roots.length) { alert('スタートノードが見つかりません'); return; }
+
+        const timelines   = [];
+        const globalVisit = new Set();  // 同一ノードの重複処理を防ぐ
+
+        function buildTimeline(startId, timelineId) {
+            const events = [];
+            let current  = startId;
+            const localVisit = new Set();
+
+            while (current) {
+                // 循環検出: 既訪問ならジャンプイベントを挿入して終了
+                if (localVisit.has(current) || globalVisit.has(current)) {
+                    events.push({ event_type: 'dialogic_jump', timeline: `timeline_${current}` });
+                    break;
+                }
+                localVisit.add(current); globalVisit.add(current);
+
+                const nd = nodesDS.get(current); if (!nd) break;
+
+                if (nd.type === 'text') {
+                    events.push({ event_type: 'dialogic_text', text: nd.rawText || '' });
+
+                } else if (nd.type === 'sprite') {
+                    events.push({
+                        event_type: 'dialogic_character',
+                        character:  nd.charName    || '',
+                        portrait:   nd.expression  || 'default',
+                        position:   nd.spritePos   || 'left',
+                        action:     nd.spriteAction === 'exit' ? 'leave' : 'join',
+                    });
+
+                } else if (nd.type === 'choice') {
+                    const options = (nd.childIds || []).map(optId => {
+                        const optNode = nodesDS.get(optId);
+                        const nextId  = (outgoing.get(optId) || [])[0] ?? null;
+                        let   nextTimeline = null;
+                        if (nextId && !globalVisit.has(nextId)) {
+                            nextTimeline = `timeline_${optId}`;
+                            buildTimeline(nextId, nextTimeline);  // 再帰で分岐タイムラインを生成
+                        } else if (nextId) {
+                            nextTimeline = `timeline_${nextId}`;  // 既訪問 → ジャンプ参照
+                        }
+                        return { text: optNode?.rawText || '', timeline: nextTimeline };
+                    });
+                    events.push({ event_type: 'dialogic_choice', question: nd.rawText || '', options });
+                    break;  // CHOICE でタイムラインを終了（分岐は再帰処理済み）
+                }
+
+                // 次ノード（option は飛ばす）
+                const nexts = (outgoing.get(current) || [])
+                    .map(id => nodesDS.get(id))
+                    .filter(n => n && n.type !== 'option')
+                    .map(n => n.id);
+                current = nexts[0] ?? null;
+            }
+
+            timelines.push({ id: timelineId, events });
+        }
+
+        roots.forEach((root, i) => {
+            if (!globalVisit.has(root.id))
+                buildTimeline(root.id, i === 0 ? 'main' : `timeline_${root.id}`);
+        });
+
+        const output = {
+            _format:  'scenario_architect_dialogic_v1',
+            _note:    'Dialogic 2.x (Godot 4.x) 用。GDScript インポーターと組み合わせて使用してください。README を参照。',
+            timelines,
+        };
+        download(URL.createObjectURL(
+            new Blob([JSON.stringify(output, null, 2)], { type: 'application/json' })
+        ), `dialogic_${isoDate()}.json`);
+    }
+
+    // ════════════════════════════════════════════════
+    //  通常の JSON 保存 / 読込 / 画像出力
+    // ════════════════════════════════════════════════
     function download(href, filename) {
         const a = Object.assign(document.createElement('a'), { href, download: filename });
         document.body.appendChild(a); a.click(); a.remove();
     }
-
     function isoDate() { return new Date().toISOString().slice(0, 10); }
 
     function exportJson() {
@@ -942,16 +999,13 @@ const App = (() => {
         const ns  = nodesDS.get().map(({ ctxRenderer: _, shape: __, ...n }) => ({
             ...n, x: pos[n.id]?.x ?? n.x, y: pos[n.id]?.y ?? n.y,
         }));
-        const blob = new Blob(
-            [JSON.stringify({ nodes: ns, edges: edgesDS.get() }, null, 2)],
-            { type: 'application/json' }
-        );
-        download(URL.createObjectURL(blob), `scenario_${isoDate()}.json`);
+        download(URL.createObjectURL(
+            new Blob([JSON.stringify({ nodes: ns, edges: edgesDS.get() }, null, 2)], { type: 'application/json' })
+        ), `scenario_${isoDate()}.json`);
     }
 
     function importJson(event) {
-        const file = event.target.files[0];
-        if (!file) return;
+        const file = event.target.files[0]; if (!file) return;
         event.target.value = '';
         const reader = new FileReader();
         reader.onload = ev => {
@@ -959,12 +1013,9 @@ const App = (() => {
                 const { nodes: ns, edges: es } = validateImport(ev.target.result);
                 saveState();
                 nodesDS.clear(); edgesDS.clear();
-                edgesDS.add(es);
-                nodesDS.add(ns.map(n => makeNode(n)));
+                edgesDS.add(es); nodesDS.add(ns.map(n => makeNode(n)));
                 network.fit({ animation: true });
-            } catch (err) {
-                alert('読込エラー\n\n' + err.message);
-            }
+            } catch (err) { alert('読込エラー\n\n' + err.message); }
         };
         reader.readAsText(file);
     }
@@ -973,89 +1024,74 @@ const App = (() => {
         download(network.canvas.frame.canvas.toDataURL('image/png'), `scenario_${isoDate()}.png`);
     }
 
-    // ════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════
     //  キーボードショートカット
-    // ════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════
     document.addEventListener('keydown', e => {
-        if (['TEXTAREA', 'INPUT', 'SELECT'].includes(e.target.tagName)) return;
+        if (['TEXTAREA','INPUT','SELECT'].includes(e.target.tagName)) return;
         const ctrl = e.ctrlKey || e.metaKey;
-
         if ((e.key === 'Delete' || e.key === 'Backspace') && pendingFrom) {
-            saveState();
-            const id = pendingFrom;
-            pendingFrom = null;
-            closePanel();
-            removeNode(id);
+            saveState(); const id = pendingFrom;
+            pendingFrom = null; closePanel(); removeNode(id);
         }
         if (ctrl && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); }
         if (ctrl && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); redo(); }
     });
+    document.addEventListener('click', e => { if (!ctxMenuEl.contains(e.target)) hideCtxMenu(); });
 
-    // コンテキストメニュー外タップで閉じる
-    document.addEventListener('click', e => {
-        if (!ctxMenuEl.contains(e.target)) hideCtxMenu();
-    });
-
-    // ════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════
     //  公開 API (HTML の onclick から呼び出す)
-    // ════════════════════════════════════════════════════════
+    // ════════════════════════════════════════════════
     return {
         init,
-
-        // ノード作成
         createNode,
-
-        // 編集パネル
         closePanel,
         updateNodeText() {
             if (!pendingFrom) return;
             const text = document.getElementById('panel-text').value;
             nodesDS.update({ id: pendingFrom, rawText: text, label: text || ' ' });
         },
-        syncChoices() {
-            saveState();
-            buildChoiceChildren(pendingFrom, parseInt(choiceNumSel.value));
+        updateSpriteData() {
+            if (!pendingFrom) return;
+            const data = {
+                charName:     document.getElementById('sprite-name').value,
+                spritePos:    document.getElementById('sprite-pos').value,
+                expression:   document.getElementById('sprite-expr').value,
+                spriteAction: document.getElementById('sprite-action').value,
+            };
+            data.label = buildSpriteLabel(data);
+            nodesDS.update({ id: pendingFrom, ...data });
         },
-
-        // コンテキストメニュー操作
+        syncChoices() { saveState(); buildChoiceChildren(pendingFrom, parseInt(choiceNumSel.value)); },
         toggleLock() {
-            if (!ctxTargetId) return;
-            saveState();
+            if (!ctxTargetId) return; saveState();
             const n = nodesDS.get(ctxTargetId);
             nodesDS.update({ id: ctxTargetId, fixed: !n.fixed });
             hideCtxMenu(); closePanel();
         },
         copyNode() {
-            const n = nodesDS.get(ctxTargetId);
-            if (!n || n.type === 'option') return;
+            const n = nodesDS.get(ctxTargetId); if (!n || n.type === 'option') return;
             saveState();
             const pos   = network.getPositions([ctxTargetId])[ctxTargetId];
             const newId = `${n.type}_${Date.now()}_cp`;
-            nodesDS.add(makeNode({
-                id: newId, type: n.type,
-                rawText: n.rawText, label: n.label,
-                x: pos.x + 30, y: pos.y + 30, fixed: false,
-            }));
+            const copy  = { id: newId, type: n.type, rawText: n.rawText, label: n.label,
+                            x: pos.x + 30, y: pos.y + 30, fixed: false };
+            // sprite 固有フィールドをコピー
+            if (n.type === 'sprite')
+                Object.assign(copy, { charName: n.charName, spritePos: n.spritePos,
+                                      expression: n.expression, spriteAction: n.spriteAction });
+            nodesDS.add(makeNode(copy));
             if (n.type === 'choice') setTimeout(() => buildChoiceChildren(newId, n.childCount ?? 2), 50);
             hideCtxMenu();
         },
         deleteNode() {
-            if (!ctxTargetId) return;
-            saveState();
+            if (!ctxTargetId) return; saveState();
             const id = ctxTargetId;
             if (pendingFrom === id) { pendingFrom = null; closePanel(); }
-            removeNode(id);
-            hideCtxMenu();
+            removeNode(id); hideCtxMenu();
         },
-
-        // Undo / Redo
-        undo, redo,
-
-        // ナビゲーション
-        fitView,
-
-        // IO
-        exportJson, importJson, exportImage,
+        undo, redo, fitView,
+        exportJson, importJson, exportImage, exportDialogic,
     };
 })();
 
