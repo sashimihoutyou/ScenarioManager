@@ -731,6 +731,7 @@ const App = (() => {
         const { nodes: ns, edges: es } = JSON.parse(json);
         nodesDS.clear(); edgesDS.clear();
         edgesDS.add(es ?? []);
+        normalizeEdgesDirection();
         nodesDS.add((ns ?? []).map(n => attachRenderer(n, renderer)));
         pendingFrom = null; closePanel(); syncStatus();
     }
@@ -811,27 +812,49 @@ const App = (() => {
 
     /**
      * エッジの追加 / 解除。
-     * 方向は常に左から右（x 座標小 → 大）に統一する。
+     * 方向は常にノードIDの辞書順（小 → 大）に統一する。
      * どちらのノードを先に選んでも同じエッジが対象になる。
      */
+    // 2つのノードIDから、常に同じ向きの from / to を返し、エッジ方向の一意性を保つための関数
+    function getCanonicalEdgeDirection(aId, bId) {
+        if (String(aId) <= String(bId)) return { fromId: aId, toId: bId };
+        return { fromId: bId, toId: aId };
+    }
+
     function toggleEdge(aId, bId) {
-        const pos = network.getPositions([aId, bId]);
-        const [fromId, toId] = (pos[aId]?.x ?? 0) <= (pos[bId]?.x ?? 1) ? [aId, bId] : [bId, aId];
-        const existing = edgesDS.get({ filter: e => e.from === fromId && e.to === toId });
-        if (existing.length) edgesDS.remove(existing[0].id);
+        if (aId === bId) return;
+        const { fromId, toId } = getCanonicalEdgeDirection(aId, bId);
+        const existing = edgesDS.get({ filter: e =>
+            (e.from === fromId && e.to === toId) ||
+            (e.from === toId && e.to === fromId)
+        });
+        if (existing.length) edgesDS.remove(existing.map(e => e.id));
         else                 edgesDS.add({ from: fromId, to: toId });
     }
 
-    // 全エッジの向きを左右位置に合わせて補正し、常に左ノードから右ノードへ向けるための関数
+    // 全エッジの向きをノードIDの辞書順で正規化し、逆向き・重複エッジを解消するための関数
     function normalizeEdgesDirection() {
-        const changedEdges = edgesDS.get().map(edge => {
-            const pos = network.getPositions([edge.from, edge.to]);
-            const fromX = pos[edge.from]?.x ?? 0;
-            const toX = pos[edge.to]?.x ?? 0;
-            if (fromX <= toX) return null;
-            return { id: edge.id, from: edge.to, to: edge.from };
-        }).filter(Boolean);
+        const seenPairKeys = new Set();
+        const changedEdges = [];
+        const duplicateEdgeIds = [];
+
+        edgesDS.get().forEach(edge => {
+            const { fromId, toId } = getCanonicalEdgeDirection(edge.from, edge.to);
+            const pairKey = `${String(fromId)}\u0000${String(toId)}`;
+
+            if (seenPairKeys.has(pairKey)) {
+                duplicateEdgeIds.push(edge.id);
+                return;
+            }
+
+            seenPairKeys.add(pairKey);
+            if (edge.from !== fromId || edge.to !== toId) {
+                changedEdges.push({ id: edge.id, from: fromId, to: toId });
+            }
+        });
+
         if (changedEdges.length) edgesDS.update(changedEdges);
+        if (duplicateEdgeIds.length) edgesDS.remove(duplicateEdgeIds);
     }
 
     // ノード編集履歴を記録し、後で「最後に編集したノードへ移動」できるようにする関数
@@ -1141,6 +1164,7 @@ const App = (() => {
                 saveState();
                 nodesDS.clear(); edgesDS.clear();
                 edgesDS.add(es); nodesDS.add(ns.map(n => makeNode(n)));
+                normalizeEdgesDirection();
                 clearTemporaryData();
                 network.fit({ animation: true });
             } catch (err) { alert('読込エラー\n\n' + err.message); }
