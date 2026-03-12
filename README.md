@@ -2,7 +2,7 @@
 
 シナリオをフローチャート形式で視覚的に管理するためのブラウザベースツールです。  
 `index.html` をブラウザで開くだけで動作します（サーバー不要 / スマートフォン対応）。
-
+https://sashimihoutyou.github.io/ScenarioManager/
 ---
 
 ## ノードの種類
