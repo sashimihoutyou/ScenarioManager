@@ -264,6 +264,7 @@ const CFG = Object.freeze({
     maxNodes:      500,
     maxEdges:      2000,
     maxStrLen:     5000,
+    tempStorageKey:'scenario_manager_temp_data_v1',
 });
 
 const NODE_COLORS = Object.freeze({
@@ -649,6 +650,35 @@ const App = (() => {
         syncHistoryButtons();
     }
 
+    // 一時データをローカルストレージに保存し、再読み込み時の編集復元に備える関数
+    function persistTemporaryData() {
+        try {
+            localStorage.setItem(CFG.tempStorageKey, snapshot());
+        } catch (err) {
+            console.warn('一時データの保存に失敗しました:', err);
+        }
+    }
+
+    // 一時データを削除し、手動保存やファイル読込後に古い復元データを残さないための関数
+    function clearTemporaryData() {
+        localStorage.removeItem(CFG.tempStorageKey);
+    }
+
+    // 画面読み込み時に一時データを復元し、未保存編集の消失を防ぐための関数
+    function restoreTemporaryDataIfExists() {
+        const tempJson = localStorage.getItem(CFG.tempStorageKey);
+        if (!tempJson) return;
+        try {
+            const parsed = validateImport(tempJson);
+            const restored = JSON.stringify(parsed);
+            applySnapshot(restored);
+            network.fit({ animation: true });
+        } catch (err) {
+            console.warn('一時データの復元に失敗したため削除しました:', err);
+            clearTemporaryData();
+        }
+    }
+
     function applySnapshot(json) {
         const { nodes: ns, edges: es } = JSON.parse(json);
         nodesDS.clear(); edgesDS.clear();
@@ -874,7 +904,10 @@ const App = (() => {
 
         nodesDS.on('*', syncStatus);
         edgesDS.on('*', syncStatus);
+        nodesDS.on('*', persistTemporaryData);
+        edgesDS.on('*', persistTemporaryData);
         syncStatus();
+        restoreTemporaryDataIfExists();
     }
 
     // ════════════════════════════════════════════════
@@ -1000,6 +1033,7 @@ const App = (() => {
         const ns  = nodesDS.get().map(({ ctxRenderer: _, shape: __, ...n }) => ({
             ...n, x: pos[n.id]?.x ?? n.x, y: pos[n.id]?.y ?? n.y,
         }));
+        clearTemporaryData();
         download(URL.createObjectURL(
             new Blob([JSON.stringify({ nodes: ns, edges: edgesDS.get() }, null, 2)], { type: 'application/json' })
         ), `scenario_${isoDate()}.json`);
@@ -1015,6 +1049,7 @@ const App = (() => {
                 saveState();
                 nodesDS.clear(); edgesDS.clear();
                 edgesDS.add(es); nodesDS.add(ns.map(n => makeNode(n)));
+                clearTemporaryData();
                 network.fit({ animation: true });
             } catch (err) { alert('読込エラー\n\n' + err.message); }
         };
