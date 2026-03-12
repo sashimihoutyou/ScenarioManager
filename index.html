@@ -146,7 +146,8 @@
         #btn-close-panel:hover { background: #dfe4e6; }
 
         /* ── コンテキストメニュー ───────────────────────────── */
-        #ctx-menu {
+        #ctx-menu-node,
+        #ctx-menu-canvas {
             display: none; position: absolute; z-index: 2000;
             background: white; border-radius: 12px;
             box-shadow: 0 8px 28px rgba(0,0,0,0.18);
@@ -261,10 +262,16 @@
 </div>
 
 <!-- ── コンテキストメニュー ──────────────────────────────── -->
-<div id="ctx-menu">
+<div id="ctx-menu-node">
     <div class="ctx-item" onclick="App.toggleLock()">🔒 ロック切替</div>
     <div class="ctx-item" onclick="App.copyNode()">📄 コピー</div>
     <div class="ctx-item danger" onclick="App.deleteNode()">🗑 削除</div>
+</div>
+
+<div id="ctx-menu-canvas">
+    <div class="ctx-item" onclick="App.showLastEditedNode()">🧭 最後に編集したノードを表示</div>
+    <div class="ctx-item" onclick="App.resetCameraCenter()">🎯 カメラを中央に戻す</div>
+    <div class="ctx-item danger" onclick="App.deleteAllNodes()">🗑 すべて削除</div>
 </div>
 
 <!-- ── ステータスバー ──────────────────────────────────── -->
@@ -515,6 +522,7 @@ const App = (() => {
     // ── UI 状態 ───────────────────────────────────────
     let pendingFrom = null;   // 接続操作の待機中ノード ID
     let ctxTargetId = null;   // コンテキストメニューのターゲット
+    let lastEditedNodeId = null; // 最後に編集したノード ID
 
     // ── 履歴 ──────────────────────────────────────────
     let undoStack = [], redoStack = [];
@@ -761,6 +769,7 @@ const App = (() => {
         nodesDS.add(makeNode(base));
         if (type === 'choice') setTimeout(() => buildChoiceChildren(id, 2), 50);
         pendingFrom = id;
+        markLastEditedNode(id);
         openPanel(nodesDS.get(id));
     }
 
@@ -813,6 +822,24 @@ const App = (() => {
         else                 edgesDS.add({ from: fromId, to: toId });
     }
 
+    // 全エッジの向きを左右位置に合わせて補正し、常に左ノードから右ノードへ向けるための関数
+    function normalizeEdgesDirection() {
+        const changedEdges = edgesDS.get().map(edge => {
+            const pos = network.getPositions([edge.from, edge.to]);
+            const fromX = pos[edge.from]?.x ?? 0;
+            const toX = pos[edge.to]?.x ?? 0;
+            if (fromX <= toX) return null;
+            return { id: edge.id, from: edge.to, to: edge.from };
+        }).filter(Boolean);
+        if (changedEdges.length) edgesDS.update(changedEdges);
+    }
+
+    // ノード編集履歴を記録し、後で「最後に編集したノードへ移動」できるようにする関数
+    function markLastEditedNode(id) {
+        if (!id || !nodesDS.get(id)) return;
+        lastEditedNodeId = id;
+    }
+
     // ════════════════════════════════════════════════
     //  編集パネル
     // ════════════════════════════════════════════════
@@ -855,12 +882,28 @@ const App = (() => {
     // ════════════════════════════════════════════════
     //  コンテキストメニュー
     // ════════════════════════════════════════════════
-    const ctxMenuEl = document.getElementById('ctx-menu');
-    function showCtxMenu(nodeId, domX, domY) {
+    const nodeCtxMenuEl = document.getElementById('ctx-menu-node');
+    const canvasCtxMenuEl = document.getElementById('ctx-menu-canvas');
+
+    // ノード向けコンテキストメニューを表示し、対象ノード操作を実行できるようにする関数
+    function showNodeCtxMenu(nodeId, domX, domY) {
+        hideCtxMenu();
         ctxTargetId = nodeId;
-        Object.assign(ctxMenuEl.style, { display: 'flex', left: `${domX}px`, top: `${domY}px` });
+        Object.assign(nodeCtxMenuEl.style, { display: 'flex', left: `${domX}px`, top: `${domY}px` });
     }
-    function hideCtxMenu() { ctxMenuEl.style.display = 'none'; }
+
+    // キャンバス向けコンテキストメニューを表示し、全体操作を実行できるようにする関数
+    function showCanvasCtxMenu(domX, domY) {
+        hideCtxMenu();
+        ctxTargetId = null;
+        Object.assign(canvasCtxMenuEl.style, { display: 'flex', left: `${domX}px`, top: `${domY}px` });
+    }
+
+    // すべてのコンテキストメニューを閉じ、重複表示を防ぐための関数
+    function hideCtxMenu() {
+        nodeCtxMenuEl.style.display = 'none';
+        canvasCtxMenuEl.style.display = 'none';
+    }
 
     // ════════════════════════════════════════════════
     //  vis-network 初期化
@@ -906,6 +949,7 @@ const App = (() => {
         // ── ドラッグ終了: OPTION のオフセット更新 & 後処理 ─────
         network.on('dragEnd', ({ nodes: nds }) => {
             scheduleMinimap(); enforceBounds();
+            normalizeEdgesDirection();
             if (!nds.length) return;
             const moved = nodesDS.get(nds[0]);
             if (moved?.type !== 'option') return;
@@ -943,8 +987,11 @@ const App = (() => {
 
         // ── 長押し: コンテキストメニュー ───────────────────────
         network.on('hold', ({ nodes: nds, pointer }) => {
-            if (!nds.length) return;
-            showCtxMenu(nds[0], pointer.DOM.x, pointer.DOM.y);
+            if (nds.length) {
+                showNodeCtxMenu(nds[0], pointer.DOM.x, pointer.DOM.y);
+                return;
+            }
+            showCanvasCtxMenu(pointer.DOM.x, pointer.DOM.y);
         });
 
         nodesDS.on('*', syncStatus);
@@ -1118,20 +1165,26 @@ const App = (() => {
         if (ctrl && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); }
         if (ctrl && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); redo(); }
     });
-    document.addEventListener('click', e => { if (!ctxMenuEl.contains(e.target)) hideCtxMenu(); });
+    document.addEventListener('click', e => {
+        if (!nodeCtxMenuEl.contains(e.target) && !canvasCtxMenuEl.contains(e.target)) hideCtxMenu();
+    });
 
     // ════════════════════════════════════════════════
     //  公開 API (HTML の onclick から呼び出す)
     // ════════════════════════════════════════════════
     return {
         init,
+        // 新規ノードを作成し、編集対象として開く関数
         createNode,
         closePanel,
+        // テキストノードの内容を更新し、最新編集ノードとして記録する関数
         updateNodeText() {
             if (!pendingFrom) return;
             const text = document.getElementById('panel-text').value;
             nodesDS.update({ id: pendingFrom, rawText: text, label: text || ' ' });
+            markLastEditedNode(pendingFrom);
         },
+        // 立ち絵ノードの設定を更新し、最新編集ノードとして記録する関数
         updateSpriteData() {
             if (!pendingFrom) return;
             const data = {
@@ -1142,6 +1195,7 @@ const App = (() => {
             };
             data.label = buildSpriteLabel(data);
             nodesDS.update({ id: pendingFrom, ...data });
+            markLastEditedNode(pendingFrom);
         },
         syncChoices() { saveState(); buildChoiceChildren(pendingFrom, parseInt(choiceNumSel.value)); },
         toggleLock() {
@@ -1163,13 +1217,62 @@ const App = (() => {
                                       expression: n.expression, spriteAction: n.spriteAction });
             nodesDS.add(makeNode(copy));
             if (n.type === 'choice') setTimeout(() => buildChoiceChildren(newId, n.childCount ?? 2), 50);
+            markLastEditedNode(newId);
             hideCtxMenu();
         },
+        // ノード削除時に確認ダイアログを表示し、誤削除を防ぐための関数
         deleteNode() {
-            if (!ctxTargetId) return; saveState();
+            if (!ctxTargetId) return;
+            if (!confirm('本当によろしいですか？')) return;
+            saveState();
             const id = ctxTargetId;
             if (pendingFrom === id) { pendingFrom = null; closePanel(); }
+            if (lastEditedNodeId === id) lastEditedNodeId = null;
             removeNode(id); hideCtxMenu();
+        },
+        // 最後に編集したノードへカメラ移動し、編集再開しやすくする関数
+        showLastEditedNode() {
+            if (!lastEditedNodeId || !nodesDS.get(lastEditedNodeId)) {
+                hideCtxMenu();
+                return;
+            }
+            const pos = network.getPositions([lastEditedNodeId])[lastEditedNodeId];
+            if (!pos) {
+                hideCtxMenu();
+                return;
+            }
+            showMinimap();
+            network.moveTo({
+                position: pos,
+                animation: { duration: CFG.animMove, easingFunction: 'easeInOutQuad' },
+            });
+            scheduleMinimapAfter(CFG.animMove);
+            pendingFrom = lastEditedNodeId;
+            const nd = nodesDS.get(lastEditedNodeId);
+            if (nd && !nd.fixed) openPanel(nd);
+            hideCtxMenu();
+        },
+        // カメラをワールド中央へ戻し、迷子になった際の復帰を容易にする関数
+        resetCameraCenter() {
+            showMinimap();
+            network.moveTo({
+                position: { x: 0, y: 0 },
+                animation: { duration: CFG.animMove, easingFunction: 'easeInOutQuad' },
+            });
+            scheduleMinimapAfter(CFG.animMove);
+            hideCtxMenu();
+        },
+        // 全ノード削除前に確認を挟み、意図しない全消去を防ぐための関数
+        deleteAllNodes() {
+            if (!confirm('本当によろしいですか？')) return;
+            saveState();
+            nodesDS.clear();
+            edgesDS.clear();
+            pendingFrom = null;
+            ctxTargetId = null;
+            lastEditedNodeId = null;
+            closePanel();
+            hideCtxMenu();
         },
         undo, redo, fitView,
         exportJson, importJson, exportImage, exportDialogic,
