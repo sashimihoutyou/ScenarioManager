@@ -264,6 +264,7 @@
 <!-- ── コンテキストメニュー ──────────────────────────────── -->
 <div id="ctx-menu-node">
     <div class="ctx-item" onclick="App.toggleLock()">🔒 ロック切替</div>
+    <div class="ctx-item" onclick="App.clearNodeConnections()">🔌 このノードの接続をすべて切る</div>
     <div class="ctx-item" onclick="App.copyNode()">📄 コピー</div>
     <div class="ctx-item danger" onclick="App.deleteNode()">🗑 削除</div>
 </div>
@@ -279,7 +280,7 @@
     <span id="st-nodes">ノード: 0</span>
     <span class="st-sep">|</span>
     <span id="st-edges">接続: 0</span>
-    <span class="st-hint">クリック: 選択/接続　長押し: メニュー　Del: 削除　Ctrl+Z/Y: Undo/Redo</span>
+    <span class="st-hint">クリック: 編集　ダブルタップ: 接続/解除　長押し: メニュー　Del: 削除　Ctrl+Z/Y: Undo/Redo</span>
 </div>
 
 <script>
@@ -361,7 +362,7 @@ function createCtxRenderer(nodesDS) {
         const nd = nodesDS.get(id);
         if (!nd) return { drawNode() {}, nodeDimensions: { width: CFG.nodeW, height: 80 } };
 
-        const { type = 'text', fixed = false } = nd;
+        const { type = 'text', fixed = false, connectPending = false } = nd;
         // sprite は buildSpriteLabel 由来の label、その他は rawText → label の順にフォールバック
         const displayText = type === 'sprite'
             ? (nd.label || '')
@@ -384,8 +385,8 @@ function createCtxRenderer(nodesDS) {
                 ctx.restore();
 
                 // 外枠
-                ctx.strokeStyle = selected ? color : color + 'aa';
-                ctx.lineWidth   = selected ? 2.5 : 1.5;
+                ctx.strokeStyle = connectPending ? '#f39c12' : (selected ? color : color + 'aa');
+                ctx.lineWidth   = connectPending ? 4 : (selected ? 2.5 : 1.5);
                 roundRectPath(ctx, lx, ty, W, H, 8); ctx.stroke();
 
                 // タイトルバー（角丸クリップで枠外に出ないようにする）
@@ -520,7 +521,8 @@ const App = (() => {
     let   network = null;
 
     // ── UI 状態 ───────────────────────────────────────
-    let pendingFrom = null;   // 接続操作の待機中ノード ID
+    let editingNodeId = null; // 編集パネルで編集中のノード ID
+    let connectFromId = null; // ダブルタップ接続の起点ノード ID
     let ctxTargetId = null;   // コンテキストメニューのターゲット
     let lastEditedNodeId = null; // 最後に編集したノード ID
 
@@ -684,7 +686,7 @@ const App = (() => {
     function snapshot() {
         const pos = network?.getPositions() ?? {};
         return JSON.stringify({
-            nodes: nodesDS.get().map(({ ctxRenderer: _, shape: __, ...n }) => ({
+            nodes: nodesDS.get().map(({ ctxRenderer: _, shape: __, connectPending: ___, ...n }) => ({
                 ...n, x: pos[n.id]?.x ?? n.x, y: pos[n.id]?.y ?? n.y,
             })),
             edges: edgesDS.get(),
@@ -733,7 +735,10 @@ const App = (() => {
         edgesDS.add(es ?? []);
         normalizeEdgesDirection();
         nodesDS.add((ns ?? []).map(n => attachRenderer(n, renderer)));
-        pendingFrom = null; closePanel(); syncStatus();
+        setConnectSource(null);
+        editingNodeId = null;
+        closePanel();
+        syncStatus();
     }
 
     function syncHistoryButtons() {
@@ -769,7 +774,8 @@ const App = (() => {
 
         nodesDS.add(makeNode(base));
         if (type === 'choice') setTimeout(() => buildChoiceChildren(id, 2), 50);
-        pendingFrom = id;
+        editingNodeId = id;
+        setConnectSource(null);
         markLastEditedNode(id);
         openPanel(nodesDS.get(id));
     }
@@ -855,6 +861,24 @@ const App = (() => {
 
         if (changedEdges.length) edgesDS.update(changedEdges);
         if (duplicateEdgeIds.length) edgesDS.remove(duplicateEdgeIds);
+    }
+
+    // 接続開始ノードの強調状態を管理し、ダブルタップ接続の起点を分かりやすくする関数
+    function setConnectSource(id) {
+        if (connectFromId && nodesDS.get(connectFromId)) {
+            nodesDS.update({ id: connectFromId, connectPending: false });
+        }
+        connectFromId = id;
+        if (connectFromId && nodesDS.get(connectFromId)) {
+            nodesDS.update({ id: connectFromId, connectPending: true });
+        }
+    }
+
+    // 指定ノードに接続された全エッジを削除し、長押しメニューから一括切断できるようにする関数
+    function clearNodeEdges(id) {
+        if (!id || !nodesDS.get(id)) return;
+        const edgeIds = edgesDS.get({ filter: e => e.from === id || e.to === id }).map(e => e.id);
+        if (edgeIds.length) edgesDS.remove(edgeIds);
     }
 
     // ノード編集履歴を記録し、後で「最後に編集したノードへ移動」できるようにする関数
@@ -990,22 +1014,42 @@ const App = (() => {
         // ── ズーム: ミニマップ表示 & 範囲制限 ─────────────────
         network.on('zoom', () => { showMinimap(); scheduleMinimap(); enforceBounds(); });
 
-        // ── クリック: 接続操作 ──────────────────────────────────
+        // ── クリック: 編集パネル表示 ────────────────────────────
         network.on('click', ({ nodes: nds }) => {
             hideCtxMenu(); hideMinimap();
             const id = nds[0];
             if (id) {
-                if (pendingFrom && pendingFrom !== id) {
-                    saveState(); toggleEdge(pendingFrom, id);
-                    pendingFrom = null; closePanel();
-                } else {
-                    pendingFrom = id;
-                    const nd = nodesDS.get(id);
-                    if (nd && !nd.fixed) openPanel(nd);
-                }
+                editingNodeId = id;
+                const nd = nodesDS.get(id);
+                if (nd && !nd.fixed) openPanel(nd);
             } else {
-                pendingFrom = null; closePanel();
+                editingNodeId = null;
+                closePanel();
             }
+        });
+
+        // ── ダブルクリック: 接続開始/接続切替/キャンセル ─────────
+        network.on('doubleClick', ({ nodes: nds }) => {
+            hideCtxMenu();
+            const id = nds[0];
+            if (!id) {
+                setConnectSource(null);
+                return;
+            }
+
+            if (!connectFromId) {
+                setConnectSource(id);
+                return;
+            }
+
+            if (connectFromId === id) {
+                setConnectSource(null);
+                return;
+            }
+
+            saveState();
+            toggleEdge(connectFromId, id);
+            setConnectSource(null);
         });
 
         // ── 長押し: コンテキストメニュー ───────────────────────
@@ -1145,7 +1189,7 @@ const App = (() => {
 
     function exportJson() {
         const pos = network.getPositions();
-        const ns  = nodesDS.get().map(({ ctxRenderer: _, shape: __, ...n }) => ({
+        const ns  = nodesDS.get().map(({ ctxRenderer: _, shape: __, connectPending: ___, ...n }) => ({
             ...n, x: pos[n.id]?.x ?? n.x, y: pos[n.id]?.y ?? n.y,
         }));
         clearTemporaryData();
@@ -1165,6 +1209,9 @@ const App = (() => {
                 nodesDS.clear(); edgesDS.clear();
                 edgesDS.add(es); nodesDS.add(ns.map(n => makeNode(n)));
                 normalizeEdgesDirection();
+                setConnectSource(null);
+                editingNodeId = null;
+                closePanel();
                 clearTemporaryData();
                 network.fit({ animation: true });
             } catch (err) { alert('読込エラー\n\n' + err.message); }
@@ -1182,9 +1229,13 @@ const App = (() => {
     document.addEventListener('keydown', e => {
         if (['TEXTAREA','INPUT','SELECT'].includes(e.target.tagName)) return;
         const ctrl = e.ctrlKey || e.metaKey;
-        if ((e.key === 'Delete' || e.key === 'Backspace') && pendingFrom) {
-            saveState(); const id = pendingFrom;
-            pendingFrom = null; closePanel(); removeNode(id);
+        if ((e.key === 'Delete' || e.key === 'Backspace') && editingNodeId) {
+            saveState();
+            const id = editingNodeId;
+            editingNodeId = null;
+            if (connectFromId === id) setConnectSource(null);
+            closePanel();
+            removeNode(id);
         }
         if (ctrl && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); }
         if (ctrl && (e.key === 'y' || (e.shiftKey && e.key === 'z'))) { e.preventDefault(); redo(); }
@@ -1203,14 +1254,14 @@ const App = (() => {
         closePanel,
         // テキストノードの内容を更新し、最新編集ノードとして記録する関数
         updateNodeText() {
-            if (!pendingFrom) return;
+            if (!editingNodeId) return;
             const text = document.getElementById('panel-text').value;
-            nodesDS.update({ id: pendingFrom, rawText: text, label: text || ' ' });
-            markLastEditedNode(pendingFrom);
+            nodesDS.update({ id: editingNodeId, rawText: text, label: text || ' ' });
+            markLastEditedNode(editingNodeId);
         },
         // 立ち絵ノードの設定を更新し、最新編集ノードとして記録する関数
         updateSpriteData() {
-            if (!pendingFrom) return;
+            if (!editingNodeId) return;
             const data = {
                 charName:     document.getElementById('sprite-name').value,
                 spritePos:    document.getElementById('sprite-pos').value,
@@ -1218,10 +1269,14 @@ const App = (() => {
                 spriteAction: document.getElementById('sprite-action').value,
             };
             data.label = buildSpriteLabel(data);
-            nodesDS.update({ id: pendingFrom, ...data });
-            markLastEditedNode(pendingFrom);
+            nodesDS.update({ id: editingNodeId, ...data });
+            markLastEditedNode(editingNodeId);
         },
-        syncChoices() { saveState(); buildChoiceChildren(pendingFrom, parseInt(choiceNumSel.value)); },
+        syncChoices() {
+            if (!editingNodeId) return;
+            saveState();
+            buildChoiceChildren(editingNodeId, parseInt(choiceNumSel.value));
+        },
         toggleLock() {
             if (!ctxTargetId) return; saveState();
             const n = nodesDS.get(ctxTargetId);
@@ -1250,9 +1305,18 @@ const App = (() => {
             if (!confirm('本当によろしいですか？')) return;
             saveState();
             const id = ctxTargetId;
-            if (pendingFrom === id) { pendingFrom = null; closePanel(); }
+            if (editingNodeId === id) { editingNodeId = null; closePanel(); }
+            if (connectFromId === id) setConnectSource(null);
             if (lastEditedNodeId === id) lastEditedNodeId = null;
             removeNode(id); hideCtxMenu();
+        },
+        // 長押しメニューから対象ノードの接続を全削除し、手動切断の操作を簡単にする関数
+        clearNodeConnections() {
+            if (!ctxTargetId) return;
+            saveState();
+            clearNodeEdges(ctxTargetId);
+            if (connectFromId === ctxTargetId) setConnectSource(null);
+            hideCtxMenu();
         },
         // 最後に編集したノードへカメラ移動し、編集再開しやすくする関数
         showLastEditedNode() {
@@ -1271,7 +1335,7 @@ const App = (() => {
                 animation: { duration: CFG.animMove, easingFunction: 'easeInOutQuad' },
             });
             scheduleMinimapAfter(CFG.animMove);
-            pendingFrom = lastEditedNodeId;
+            editingNodeId = lastEditedNodeId;
             const nd = nodesDS.get(lastEditedNodeId);
             if (nd && !nd.fixed) openPanel(nd);
             hideCtxMenu();
@@ -1292,7 +1356,8 @@ const App = (() => {
             saveState();
             nodesDS.clear();
             edgesDS.clear();
-            pendingFrom = null;
+            editingNodeId = null;
+            setConnectSource(null);
             ctxTargetId = null;
             lastEditedNodeId = null;
             closePanel();
